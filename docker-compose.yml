@@ -1,0 +1,22 @@
+services:
+  uhld:
+    build: .
+    image: uhld:local
+    container_name: uhld
+    ports:
+      - "8222:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_PATH=/data/uhld.db
+      - TZ=${TZ:-America/Montreal}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

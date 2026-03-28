@@ -1,0 +1,27 @@
+# docker-compose.tailscale.yml — adds a Tailscale sidecar so UHLD is
+# reachable on your tailnet without exposing it to the public internet.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: uhld-tailscale
+    hostname: ${TS_HOSTNAME:-uhld}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_EXTRA_ARGS=--advertise-tags=tag:container
+      - TS_SERVE_CONFIG=/config/tailscale-serve.json
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - uhld-ts-state:/var/lib/tailscale
+      - ./tailscale-serve.json:/config/tailscale-serve.json:ro
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+    network_mode: "service:uhld"
+
+volumes:
+  uhld-ts-state:

@@ -1,0 +1,18 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+pyjwt==2.10.1
+cryptography==43.0.3
+apscheduler==3.10.4
+httpx==0.27.2
+pydantic==2.10.3
+pydantic-settings==2.6.1
+typer==0.13.1
+rich==13.9.4
+python-multipart==0.0.20
+# Plugin dependencies
+proxmoxer==2.0.1
+requests==2.32.3

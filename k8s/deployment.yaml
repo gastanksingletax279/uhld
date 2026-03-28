@@ -1,0 +1,109 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: uhld
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uhld-data
+  namespace: uhld
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: uhld-secrets
+  namespace: uhld
+type: Opaque
+stringData:
+  JWT_SECRET: "changeme"
+  ENCRYPTION_KEY: "changeme"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uhld
+  namespace: uhld
+  labels:
+    app: uhld
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uhld
+  template:
+    metadata:
+      labels:
+        app: uhld
+    spec:
+      containers:
+        - name: uhld
+          image: ghcr.io/your-github-username/uhld:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: uhld-secrets
+                  key: JWT_SECRET
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: uhld-secrets
+                  key: ENCRYPTION_KEY
+            - name: DATABASE_PATH
+              value: /data/uhld.db
+            - name: TZ
+              value: America/Montreal
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: uhld-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uhld
+  namespace: uhld
+spec:
+  selector:
+    app: uhld
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
