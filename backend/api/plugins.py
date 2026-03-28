@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, UTC
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -185,7 +188,8 @@ async def plugin_health(
     try:
         result = await instance.health_check()
     except Exception as exc:
-        result = {"status": "error", "message": str(exc)}
+        logger.error("Health check failed for %s: %s", plugin_id, exc)
+        result = {"status": "error", "message": "Health check failed"}
 
     # Persist health check result
     db_result = await db.execute(select(PluginConfig).where(PluginConfig.plugin_id == plugin_id))
