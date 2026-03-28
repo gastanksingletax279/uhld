@@ -158,7 +158,7 @@ class PluginBase(ABC):
     description: str        # short description
     version: str            # e.g. "1.0.0"
     icon: str               # lucide icon name or URL to SVG
-    category: str           # "virtualization" | "monitoring" | "media" | "network" | "storage" | "automation" | "arr" | "security"
+    category: str           # "virtualization" | "monitoring" | "media" | "network" | "storage" | "automation" | "arr" | "security" | "power" | "hardware" | "developer" | "documents"
     config_schema: dict     # JSON Schema for plugin configuration fields
     
     @abstractmethod
@@ -337,6 +337,16 @@ GET  /api/plugins/grafana/alerts
 GET  /api/plugins/unifi/clients
 GET  /api/plugins/unifi/devices
 GET  /api/plugins/unifi/stats
+
+# UPS / NUT (Network UPS Tools)
+GET  /api/plugins/nut/ups                     # list all UPS devices reported by NUT
+GET  /api/plugins/nut/ups/{ups_name}          # detailed status: battery %, load %, runtime, voltage
+GET  /api/plugins/nut/ups/{ups_name}/vars     # raw NUT variables for a UPS
+
+# IPMI / BMC
+GET  /api/plugins/ipmi/sensors                # fan speeds, temperatures, voltages
+GET  /api/plugins/ipmi/power                  # power consumption, chassis status
+GET  /api/plugins/ipmi/sel                    # system event log entries
 ```
 
 ---
@@ -396,9 +406,14 @@ This means no per-plugin frontend config code is ever needed.
 | **TrueNAS** | Storage | TrueNAS REST API (httpx) |
 | **Synology DSM** | Storage | Synology API (httpx) |
 | **Pi-hole** | Network/DNS | Pi-hole API (httpx) |
-| **Radarr** | Arr | `arr` or direct REST |
+| **Radarr** | Arr | direct REST |
 | **Sonarr** | Arr | direct REST |
 | **Prowlarr** | Arr | direct REST |
+| **UPS / NUT** | Power | `nut2` (Network UPS Tools) — covers APC, Eaton, CyberPower, Tripplite, Vertiv |
+| **IPMI / BMC** | Hardware | `pyghmi` — iDRAC, iLO, generic IPMI out-of-band management |
+| **Scrutiny** | Storage | Scrutiny REST API — SMART disk health monitoring |
+| **Immich** | Media | Immich REST API — self-hosted Google Photos alternative |
+| **Nextcloud** | Storage | Nextcloud OCS/REST API |
 
 ### Phase 3
 
@@ -411,6 +426,7 @@ This means no per-plugin frontend config code is ever needed.
 | **Portainer** | Containers | Portainer API |
 | **Netdata** | Monitoring | Netdata API |
 | **Uptime Kuma** | Monitoring | WebSocket API |
+| **Beszel** | Monitoring | Beszel REST API — lightweight server monitoring |
 | **Authentik / Keycloak** | Security/Auth | REST APIs |
 | **BIND9 / CoreDNS** | Network/DNS | DNS APIs / zone files |
 | **Netbox** | IPAM | Netbox REST API |
@@ -421,8 +437,21 @@ This means no per-plugin frontend config code is ever needed.
 | **Wireguard** | Network | `wgconfig` / system |
 | **OpenVPN** | Network | management socket |
 | **OPNsense / pfSense** | Network | REST API |
+| **Nginx Proxy Manager** | Network | NPM REST API |
+| **Traefik** | Network | Traefik REST API |
+| **Cloudflare** | Network/DNS | Cloudflare API — DNS records, tunnel status |
+| **Speedtest Tracker** | Network | REST API — scheduled bandwidth testing |
 | **Prometheus** | Monitoring | PromQL API |
 | **Loki** | Monitoring | Loki API |
+| **Home Assistant** | Automation | HA REST/WebSocket API |
+| **Homebridge** | Automation | Homebridge REST API |
+| **Gitea / Forgejo** | Developer | Gitea REST API — self-hosted git |
+| **Paperless-ngx** | Documents | Paperless-ngx REST API |
+| **Bazarr** | Arr | direct REST |
+| **Lidarr** | Arr | direct REST |
+| **Readarr** | Arr | direct REST |
+| **Jellyseerr / Overseerr** | Arr/Media | direct REST |
+| **Tdarr** | Media | Tdarr REST API — transcoding pipeline |
 
 ---
 
@@ -449,6 +478,7 @@ Each plugin can define a poll interval. APScheduler runs `plugin.scheduled_poll(
 - Media: 30s (active sessions)
 - Network/DNS: 120s
 - Storage: 300s
+- Power/UPS: 30s (battery status changes quickly during outages)
 
 ---
 
