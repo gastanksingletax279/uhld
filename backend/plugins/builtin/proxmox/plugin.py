@@ -91,12 +91,6 @@ class ProxmoxPlugin(PluginBase):
         token_value = self._config.get("token_value", "").strip()
 
         if token_name and token_value:
-            # DEBUG-TEMP: log auth params (no secrets)
-            logger.info(
-                "DEBUG-TEMP proxmox auth: TOKEN | host=%s port=%s user=%s token_name=%s "
-                "token_value_len=%d verify_ssl=%s",
-                host, port, user, token_name, len(token_value), verify_ssl,
-            )
             return ProxmoxAPI(
                 host,
                 user=user,
@@ -111,12 +105,6 @@ class ProxmoxPlugin(PluginBase):
             raise RuntimeError(
                 "Either (token_name + token_value) or password must be provided"
             )
-        # DEBUG-TEMP: log auth params (no secrets)
-        logger.info(
-            "DEBUG-TEMP proxmox auth: PASSWORD | host=%s port=%s user=%s "
-            "password_len=%d verify_ssl=%s",
-            host, port, user, len(password), verify_ssl,
-        )
         return ProxmoxAPI(
             host,
             user=user,
@@ -169,12 +157,9 @@ class ProxmoxPlugin(PluginBase):
         logger.debug("Proxmox summary cache refreshed")
 
     async def _fetch_summary(self) -> dict:
-        # DEBUG-TEMP
-        logger.info("DEBUG-TEMP proxmox _fetch_summary starting")
         try:
             client = self._client_or_raise()
             nodes = await asyncio.to_thread(client.nodes.get)
-            logger.info("DEBUG-TEMP proxmox nodes response: %r", nodes)
 
             nodes_online = 0
             vms_total = 0
@@ -213,11 +198,7 @@ class ProxmoxPlugin(PluginBase):
                 "mem_total_gb": round(mem_total / 1024**3, 1),
             }
         except Exception as exc:
-            # DEBUG-TEMP
-            logger.error(
-                "DEBUG-TEMP proxmox _fetch_summary error | type=%s repr=%r",
-                type(exc).__name__, exc,
-            )
+            logger.error("Proxmox fetch_summary error: %s", exc)
             self._reset_client()
             return {"status": "error", "message": str(exc)}
 

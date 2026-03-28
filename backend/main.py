@@ -35,10 +35,6 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await registry.load_enabled_plugins(db, app)
     start_scheduler()
-    # DEBUG-TEMP: dump every registered route so we can confirm plugin routes are mounted
-    for route in app.routes:
-        methods = ",".join(sorted(getattr(route, "methods", [])))
-        logger.info("DEBUG-TEMP route: [%s] %s", methods, getattr(route, "path", "?"))
     logger.info("UHLD started")
     yield
     # Shutdown

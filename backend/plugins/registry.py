@@ -81,13 +81,6 @@ async def _enable_plugin(plugin_id: str, encrypted_config: str | None, app: Fast
 
         # Mount plugin router
         router = instance.get_router()
-        # DEBUG-TEMP: log every route being registered for this plugin
-        for route in router.routes:
-            logger.info("DEBUG-TEMP registering route: %s %s -> /api/plugins/%s%s",
-                        list(getattr(route, "methods", ["?"])),
-                        getattr(route, "path", "?"),
-                        plugin_id,
-                        getattr(route, "path", "?"))
         app.include_router(router, prefix=f"/api/plugins/{plugin_id}", tags=[plugin_id])
         logger.info("Mounted plugin router: /api/plugins/%s", plugin_id)
 
