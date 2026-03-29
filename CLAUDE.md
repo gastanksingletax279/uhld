@@ -165,3 +165,21 @@ Currently each plugin is a singleton — one instance per `plugin_id`. Future wo
 - Python: Black formatting, `from __future__ import annotations`, typed everywhere, async throughout
 - TypeScript: strict mode, no `any` in plugin code
 - All plugin API calls wrapped in try/except with graceful error returns
+
+## Implemented Plugins (reference implementations)
+
+| Plugin | Auth method | Key files |
+|---|---|---|
+| **Proxmox VE** | API token or user+password (`proxmoxer`) | `builtin/proxmox/` |
+| **AdGuard Home** | Basic auth header | `builtin/adguard/` |
+| **Pi-hole** | API key query param | `builtin/pihole/` |
+| **Tailscale** | Bearer token (Tailscale API) | `builtin/tailscale/` |
+| **UniFi** | Integration v1 `X-API-Key` (primary) + session cookie fallback | `builtin/unifi/` |
+
+### UniFi Plugin Notes
+
+The UniFi plugin supports two authentication paths:
+- **Integration v1 (recommended):** Set `api_key` in config. Uses `X-API-Key` header against `/proxy/network/integration/v1/...`. Requires a site UUID discovered via `GET /v1/sites`. Available on UDM/UDM Pro/UDM SE running UniFi OS.
+- **Session auth (fallback):** Uses `username`+`password` cookie login against `/api/s/{site}/...`. Compatible with older hardware and software controllers.
+
+The plugin auto-selects based on whether `api_key` is configured. All `_fetch_*` methods check `self._api_key()` and dispatch to either the v1 or session code path.

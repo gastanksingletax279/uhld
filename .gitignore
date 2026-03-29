@@ -28,6 +28,9 @@ data/
 docker-compose.local.yml
 build-run-local.sh
 
+# Local
+TODO.md
+
 # Editors
 .idea/
 .vscode/

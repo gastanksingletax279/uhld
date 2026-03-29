@@ -333,10 +333,14 @@ GET  /api/plugins/truenas/alerts
 GET  /api/plugins/grafana/dashboards
 GET  /api/plugins/grafana/alerts
 
-# UniFi
+# UniFi (Integration v1 API + session fallback)
 GET  /api/plugins/unifi/clients
+POST /api/plugins/unifi/clients/{client_id}/kick
 GET  /api/plugins/unifi/devices
-GET  /api/plugins/unifi/stats
+GET  /api/plugins/unifi/ports
+GET  /api/plugins/unifi/networks
+GET  /api/plugins/unifi/wlans
+GET  /api/plugins/unifi/firewall
 
 # UPS / NUT (Network UPS Tools)
 GET  /api/plugins/nut/ups                     # list all UPS devices reported by NUT
@@ -387,14 +391,15 @@ This means no per-plugin frontend config code is ever needed.
 
 ### Phase 1 — MVP (launch with these)
 
-| Plugin | Category | Python Library |
-|---|---|---|
-| **Proxmox VE** | Virtualization | `proxmoxer` |
-| **Docker** | Containers | `docker` (Docker SDK) |
-| **AdGuard Home** | Network/DNS | REST API (httpx) |
-| **Tailscale** | Network | Tailscale API (httpx) |
-| **Grafana** | Monitoring | Grafana HTTP API (httpx) |
-| **Unifi** | Network | `aiounifi` |
+| Plugin | Category | Status | Python Library |
+|---|---|---|---|
+| **Proxmox VE** | Virtualization | ✅ Complete | `proxmoxer` |
+| **AdGuard Home** | Network/DNS | ✅ Complete | REST API (httpx) |
+| **Pi-hole** | Network/DNS | ✅ Complete | Pi-hole API (httpx) |
+| **Tailscale** | Network | ✅ Complete | Tailscale API (httpx) |
+| **UniFi** | Network | ✅ Complete | UniFi Integration v1 API (httpx) |
+| **Docker** | Containers | Planned | `docker` (Docker SDK) |
+| **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
 
 ### Phase 2
 
@@ -405,7 +410,6 @@ This means no per-plugin frontend config code is ever needed.
 | **Jellyfin** | Media | Jellyfin HTTP API (httpx) |
 | **TrueNAS** | Storage | TrueNAS REST API (httpx) |
 | **Synology DSM** | Storage | Synology API (httpx) |
-| **Pi-hole** | Network/DNS | Pi-hole API (httpx) |
 | **Radarr** | Arr | direct REST |
 | **Sonarr** | Arr | direct REST |
 | **Prowlarr** | Arr | direct REST |
@@ -575,32 +579,38 @@ When implementing UHLD, follow these rules:
 
 ## Implementation Order (for Claude Code)
 
-### Sprint 1: Core Framework
-- [ ] Project scaffold (directory structure, pyproject.toml / requirements.txt, package.json)
-- [ ] FastAPI app with auth (JWT, httpOnly cookie, bcrypt)
-- [ ] Core DB models (User, PluginConfig, Setting)
-- [ ] Plugin base class and registry
-- [ ] Settings routes
-- [ ] Plugin list/enable/disable/config API routes
-- [ ] React app scaffold (Vite, Tailwind, Zustand)
-- [ ] Login page
-- [ ] Sidebar + layout with plugin nav
-- [ ] Settings → Plugin Manager page (list all plugins, enable/disable, config modal)
-- [ ] Docker build + docker-compose.yml
+### Sprint 1: Core Framework ✅ Complete
+- [x] Project scaffold (directory structure, pyproject.toml / requirements.txt, package.json)
+- [x] FastAPI app with auth (JWT, httpOnly cookie, bcrypt)
+- [x] Core DB models (User, PluginConfig, Setting)
+- [x] Plugin base class and registry
+- [x] Settings routes
+- [x] Plugin list/enable/disable/config API routes
+- [x] React app scaffold (Vite, Tailwind, Zustand)
+- [x] Login page
+- [x] Sidebar + layout with plugin nav
+- [x] Settings → Plugin Manager page (list all plugins, enable/disable, config modal)
+- [x] Docker build + docker-compose.yml
 
-### Sprint 2: First Plugin (Proxmox)
-- [ ] ProxmoxPlugin implementing PluginBase
-- [ ] Proxmox API routes (nodes, VMs, storage — read-only first)
-- [ ] Proxmox Widget.tsx (dashboard card: node count, VM count, CPU/RAM summary)
-- [ ] Proxmox View.tsx (full page: node list, VM list with start/stop actions)
-- [ ] Health check integration
-- [ ] Scheduled polling
+### Sprint 2: First Plugin (Proxmox) ✅ Complete
+- [x] ProxmoxPlugin implementing PluginBase
+- [x] Proxmox API routes (nodes, VMs, storage, start/stop/reboot/shutdown)
+- [x] Proxmox Widget.tsx (dashboard card: node count, VM count, CPU/RAM summary)
+- [x] Proxmox View.tsx (full page: node list, VM list with VM control actions, storage)
+- [x] Health check integration
+- [x] Scheduled polling
 
-### Sprint 3: Network/DNS Plugins
-- [ ] AdGuard Home plugin (stats widget, query log, protection toggle)
-- [ ] Pi-hole plugin
-- [ ] Tailscale plugin (device list, online/offline status)
-- [ ] UniFi plugin (client count, device health)
+### Sprint 3: Network/DNS Plugins ✅ Complete
+- [x] AdGuard Home plugin (stats widget, query log, protection toggle)
+- [x] Pi-hole plugin (stats widget, query log, blocking toggle)
+- [x] Tailscale plugin (device list, online/offline status, OS, last seen, tags)
+- [x] UniFi plugin — full Integration v1 API (X-API-Key + session fallback)
+  - Clients tab: filter by type (All/WiFi/Wired/VPN), sortable, bounce action
+  - Devices tab: firmware update badges, online/offline state
+  - Ports tab: PoE status, speed, connector, dynamic columns
+  - Networks tab: VLAN IDs, subnets, DHCP info
+  - WiFi tab: security type badges, client isolation
+  - Firewall tab: policies (with zone resolution), groups, zones (system/custom)
 
 ### Sprint 4: Container Plugins
 - [ ] Docker plugin (container list, start/stop, image list)
@@ -616,7 +626,5 @@ When implementing UHLD, follow these rules:
 - [ ] Notifications (Telegram, email, webhook)
 - [ ] Dashboard widget grid (drag-to-reorder)
 - [ ] Dark/light theme
-- [ ] CLI admin tool
 - [ ] k8s manifests
 - [ ] GitHub Actions Docker publish workflow
-- [ ] README

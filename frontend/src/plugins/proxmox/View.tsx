@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api, ProxmoxNode, ProxmoxVM } from '../../api/client'
-import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, Box } from 'lucide-react'
+import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react'
 
 type Tab = 'nodes' | 'vms' | 'storage'
+type SortDir = 'asc' | 'desc'
+type VmSortKey = 'name' | 'vmid' | 'node' | 'type' | 'status' | 'cpu' | 'mem' | 'uptime'
 
 export function ProxmoxView() {
   const [tab, setTab] = useState<Tab>('nodes')
@@ -12,6 +14,7 @@ export function ProxmoxView() {
   const [loading, setLoading] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [proxmoxUrl, setProxmoxUrl] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -21,7 +24,7 @@ export function ProxmoxView() {
 
     await Promise.all([
       api.proxmox.nodes()
-        .then((r) => setNodes(r.nodes))
+        .then((r) => setNodes([...r.nodes].sort((a, b) => a.node.localeCompare(b.node))))
         .catch((e: unknown) => { errs.nodes = e instanceof Error ? e.message : 'Failed' }),
       api.proxmox.allVms()
         .then((r) => setVms(r.vms))
@@ -29,6 +32,15 @@ export function ProxmoxView() {
       api.proxmox.storage()
         .then((r) => setStorage(r.storage))
         .catch((e: unknown) => { errs.storage = e instanceof Error ? e.message : 'Failed' }),
+      api.getPlugin('proxmox')
+        .then((detail) => {
+          const cfg = detail.config
+          if (cfg?.host) {
+            const port = cfg.port ?? 8006
+            setProxmoxUrl(`https://${cfg.host}:${port}`)
+          }
+        })
+        .catch(() => {}),
     ])
 
     setErrors(errs)
@@ -42,7 +54,6 @@ export function ProxmoxView() {
     setActionLoading(key)
     try {
       await api.proxmox[`${action}Vm`](vm.node, vm.vmid, vm.type)
-      // Brief delay then refresh so the new status shows
       await new Promise((r) => setTimeout(r, 1500))
       const res = await api.proxmox.allVms()
       setVms(res.vms)
@@ -63,9 +74,20 @@ export function ProxmoxView() {
     <div className="space-y-4 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Server className="w-5 h-5 text-muted" />
           <h2 className="text-base font-semibold text-white">Proxmox VE</h2>
+          {proxmoxUrl && (
+            <a
+              href={proxmoxUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors"
+            >
+              {proxmoxUrl}
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
         </div>
         <button onClick={load} disabled={loading} className="btn-ghost text-xs gap-1.5">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -184,16 +206,41 @@ function VmsTab({
   onAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
 }) {
   const [filter, setFilter] = useState<'all' | 'running' | 'stopped'>('all')
+  const [sortKey, setSortKey] = useState<VmSortKey>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   if (error) return <SectionError message={error} />
-
-  const filtered = vms.filter((v) => {
-    if (filter === 'running') return v.status === 'running'
-    if (filter === 'stopped') return v.status === 'stopped'
-    return true
-  })
-
   if (vms.length === 0) return <Empty>No VMs or containers found.</Empty>
+
+  function handleSort(key: VmSortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  const filtered = vms
+    .filter((v) => {
+      if (filter === 'running') return v.status === 'running'
+      if (filter === 'stopped') return v.status === 'stopped'
+      return true
+    })
+    .sort((a, b) => {
+      let cmp = 0
+      switch (sortKey) {
+        case 'name':    cmp = (a.name ?? '').localeCompare(b.name ?? ''); break
+        case 'vmid':    cmp = a.vmid - b.vmid; break
+        case 'node':    cmp = a.node.localeCompare(b.node); break
+        case 'type':    cmp = a.type.localeCompare(b.type); break
+        case 'status':  cmp = a.status.localeCompare(b.status); break
+        case 'cpu':     cmp = (a.cpu ?? 0) - (b.cpu ?? 0); break
+        case 'mem':     cmp = a.mem - b.mem; break
+        case 'uptime':  cmp = a.uptime - b.uptime; break
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
 
   return (
     <div className="space-y-3">
@@ -217,14 +264,14 @@ function VmsTab({
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-surface-4 text-muted">
-              <th className="px-3 py-2 text-left font-medium">ID</th>
-              <th className="px-3 py-2 text-left font-medium">Name</th>
-              <th className="px-3 py-2 text-left font-medium">Node</th>
-              <th className="px-3 py-2 text-left font-medium">Type</th>
-              <th className="px-3 py-2 text-left font-medium">Status</th>
-              <th className="px-3 py-2 text-right font-medium">CPU</th>
-              <th className="px-3 py-2 text-right font-medium">RAM</th>
-              <th className="px-3 py-2 text-right font-medium">Uptime</th>
+              <SortTh label="ID"     col="vmid"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortTh label="Name"   col="name"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortTh label="Node"   col="node"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortTh label="Type"   col="type"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortTh label="Status" col="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortTh label="CPU"    col="cpu"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <SortTh label="RAM"    col="mem"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <SortTh label="Uptime" col="uptime" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
               <th className="px-3 py-2 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -236,6 +283,35 @@ function VmsTab({
         </table>
       </div>
     </div>
+  )
+}
+
+function SortTh({
+  label, col, sortKey, sortDir, onSort, align,
+}: {
+  label: string
+  col: VmSortKey
+  sortKey: VmSortKey
+  sortDir: SortDir
+  onSort: (col: VmSortKey) => void
+  align: 'left' | 'right'
+}) {
+  const active = col === sortKey
+  return (
+    <th
+      className={`px-3 py-2 font-medium cursor-pointer select-none hover:text-gray-200 transition-colors text-${align}`}
+      onClick={() => onSort(col)}
+    >
+      <span className={`inline-flex items-center gap-0.5 ${active ? 'text-gray-200' : ''}`}>
+        {align === 'right' && active && (
+          sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+        )}
+        {label}
+        {align === 'left' && active && (
+          sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+        )}
+      </span>
+    </th>
   )
 }
 

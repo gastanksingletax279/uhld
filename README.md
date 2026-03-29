@@ -24,8 +24,11 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Sprint | Status |
 |--------|--------|
 | Core framework (auth, plugin registry, settings) | Complete |
-| Proxmox VE plugin | In progress |
-| AdGuard / Pi-hole / Tailscale / UniFi | Planned |
+| Proxmox VE plugin (nodes, VMs, storage, start/stop/reboot) | Complete |
+| AdGuard Home plugin (stats, query log, protection toggle) | Complete |
+| Pi-hole plugin (stats, query log, blocking toggle) | Complete |
+| Tailscale plugin (device list, online status) | Complete |
+| UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | Complete |
 | Docker / Kubernetes | Planned |
 | Plex / Jellyfin / TrueNAS / Synology | Planned |
 | Notifications, widget grid, k8s manifests | Planned |
@@ -83,6 +86,8 @@ Then open `http://localhost:8222`.
 ```bash
 docker exec -it uhld python -m backend.cli create-user admin yourpassword
 ```
+
+> **Default credentials:** No default credentials are set. You must create your first user via the CLI before logging in.
 
 ---
 
