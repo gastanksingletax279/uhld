@@ -35,6 +35,7 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="plugins/:pluginId" element={<PluginViewPage />} />
+          <Route path="plugins/:pluginId/:instanceId" element={<PluginViewPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/plugins" element={<SettingsPage tab="plugins" />} />
         </Route>

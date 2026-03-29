@@ -1,11 +1,13 @@
 import { FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
-import { Server } from 'lucide-react'
+import { useThemeStore } from '../store/themeStore'
+import { Server, Sun, Moon } from 'lucide-react'
 
 export function LoginPage() {
   const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
+  const { theme, toggleTheme } = useThemeStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -27,6 +29,13 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center px-4">
+      <button
+        onClick={toggleTheme}
+        className="fixed top-4 right-4 text-muted hover:text-gray-100 transition-colors"
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      >
+        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      </button>
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex items-center justify-center gap-3 mb-8">

@@ -9,11 +9,13 @@ interface PluginState {
 
   fetchPlugins: () => Promise<void>
   fetchSummary: () => Promise<void>
-  enablePlugin: (id: string, config: Record<string, unknown>) => Promise<void>
-  disablePlugin: (id: string) => Promise<void>
-  updateConfig: (id: string, config: Record<string, unknown>) => Promise<void>
-  clearPlugin: (id: string) => Promise<void>
-  getPluginDetail: (id: string) => Promise<PluginDetail>
+  enablePlugin: (id: string, config: Record<string, unknown>, instanceId?: string, instanceLabel?: string) => Promise<void>
+  disablePlugin: (id: string, instanceId?: string) => Promise<void>
+  updateConfig: (id: string, config: Record<string, unknown>, instanceId?: string) => Promise<void>
+  clearPlugin: (id: string, instanceId?: string) => Promise<void>
+  getPluginDetail: (id: string, instanceId?: string) => Promise<PluginDetail>
+  deleteInstance: (id: string, instanceId: string) => Promise<void>
+  createInstance: (id: string, instanceId: string, instanceLabel: string, config: Record<string, unknown>) => Promise<void>
 }
 
 export const usePluginStore = create<PluginState>((set) => ({
@@ -42,30 +44,41 @@ export const usePluginStore = create<PluginState>((set) => ({
     }
   },
 
-  enablePlugin: async (id, config) => {
-    await api.enablePlugin(id, config)
-    // Refresh plugin list after enabling
+  enablePlugin: async (id, config, instanceId = 'default', instanceLabel) => {
+    await api.enablePlugin(id, config, instanceId, instanceLabel)
     const plugins = await api.listPlugins()
     set({ plugins })
   },
 
-  disablePlugin: async (id) => {
-    await api.disablePlugin(id)
+  disablePlugin: async (id, instanceId = 'default') => {
+    await api.disablePlugin(id, instanceId)
     const plugins = await api.listPlugins()
     set({ plugins })
   },
 
-  updateConfig: async (id, config) => {
-    await api.updatePluginConfig(id, config)
+  updateConfig: async (id, config, instanceId = 'default') => {
+    await api.updatePluginConfig(id, config, instanceId)
     const plugins = await api.listPlugins()
     set({ plugins })
   },
 
-  clearPlugin: async (id) => {
-    await api.clearPlugin(id)
+  clearPlugin: async (id, instanceId = 'default') => {
+    await api.clearPlugin(id, instanceId)
     const plugins = await api.listPlugins()
     set({ plugins })
   },
 
-  getPluginDetail: (id) => api.getPlugin(id),
+  getPluginDetail: (id, instanceId = 'default') => api.getPlugin(id, instanceId),
+
+  deleteInstance: async (id, instanceId) => {
+    await api.deleteInstance(id, instanceId)
+    const plugins = await api.listPlugins()
+    set({ plugins })
+  },
+
+  createInstance: async (id, instanceId, instanceLabel, config) => {
+    await api.createInstance(id, instanceId, instanceLabel, config)
+    const plugins = await api.listPlugins()
+    set({ plugins })
+  },
 }))

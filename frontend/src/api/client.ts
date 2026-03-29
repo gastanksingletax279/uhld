@@ -40,89 +40,141 @@ export const api = {
 
   me: () => request<User>('/api/auth/me'),
 
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>('/api/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
   // Plugins
   listPlugins: () => request<PluginListItem[]>('/api/plugins/'),
 
-  getPlugin: (id: string) => request<PluginDetail>(`/api/plugins/${id}`),
+  getPlugin: (id: string, instanceId = 'default') =>
+    request<PluginDetail>(`/api/plugins/${id}?instance_id=${instanceId}`),
 
-  enablePlugin: (id: string, config: Record<string, unknown>) =>
+  enablePlugin: (id: string, config: Record<string, unknown>, instanceId = 'default', instanceLabel?: string) =>
     request<{ message: string }>(`/api/plugins/${id}/enable`, {
       method: 'POST',
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({ config, instance_id: instanceId, instance_label: instanceLabel }),
     }),
 
-  disablePlugin: (id: string) =>
-    request<{ message: string }>(`/api/plugins/${id}/disable`, { method: 'POST' }),
+  disablePlugin: (id: string, instanceId = 'default') =>
+    request<{ message: string }>(`/api/plugins/${id}/disable?instance_id=${instanceId}`, { method: 'POST' }),
 
-  updatePluginConfig: (id: string, config: Record<string, unknown>) =>
-    request<{ message: string }>(`/api/plugins/${id}/config`, {
+  updatePluginConfig: (id: string, config: Record<string, unknown>, instanceId = 'default') =>
+    request<{ message: string }>(`/api/plugins/${id}/config?instance_id=${instanceId}`, {
       method: 'PUT',
       body: JSON.stringify({ config }),
     }),
 
-  checkPluginHealth: (id: string) =>
-    request<{ status: string; message: string }>(`/api/plugins/${id}/health`),
+  checkPluginHealth: (id: string, instanceId = 'default') =>
+    request<{ status: string; message: string }>(`/api/plugins/${id}/health?instance_id=${instanceId}`),
 
-  clearPlugin: (id: string) =>
-    request<{ message: string }>(`/api/plugins/${id}/clear`, { method: 'POST' }),
+  clearPlugin: (id: string, instanceId = 'default') =>
+    request<{ message: string }>(`/api/plugins/${id}/clear?instance_id=${instanceId}`, { method: 'POST' }),
+
+  // Multi-instance management
+  listInstances: (id: string) =>
+    request<PluginListItem[]>(`/api/plugins/${id}/instances`),
+
+  createInstance: (id: string, instanceId: string, instanceLabel: string | null, config: Record<string, unknown>) =>
+    request<{ message: string }>(`/api/plugins/${id}/instances`, {
+      method: 'POST',
+      body: JSON.stringify({ instance_id: instanceId, instance_label: instanceLabel, config }),
+    }),
+
+  deleteInstance: (id: string, instanceId: string) =>
+    request<{ message: string }>(`/api/plugins/${id}/instances/${instanceId}`, { method: 'DELETE' }),
+
+  updateInstanceConfig: (id: string, instanceId: string, config: Record<string, unknown>) =>
+    request<{ message: string }>(`/api/plugins/${id}/instances/${instanceId}/config`, {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    }),
 
   // Dashboard
   dashboardSummary: () => request<{ plugins: PluginSummary[] }>('/api/dashboard/summary'),
 
-  // Proxmox
-  proxmox: {
-    nodes: () => request<{ nodes: ProxmoxNode[] }>('/api/plugins/proxmox/nodes'),
-    allVms: () => request<{ vms: ProxmoxVM[] }>('/api/plugins/proxmox/vms'),
-    nodeVms: (node: string) => request<{ vms: ProxmoxVM[] }>(`/api/plugins/proxmox/nodes/${node}/vms`),
-    storage: () => request<{ storage: ProxmoxStorage[] }>('/api/plugins/proxmox/storage'),
-    startVm: (node: string, vmid: number, type = 'qemu') =>
-      request<{ task: string }>(`/api/plugins/proxmox/nodes/${node}/vms/${vmid}/start?vm_type=${type}`, { method: 'POST' }),
-    stopVm: (node: string, vmid: number, type = 'qemu') =>
-      request<{ task: string }>(`/api/plugins/proxmox/nodes/${node}/vms/${vmid}/stop?vm_type=${type}`, { method: 'POST' }),
-    shutdownVm: (node: string, vmid: number, type = 'qemu') =>
-      request<{ task: string }>(`/api/plugins/proxmox/nodes/${node}/vms/${vmid}/shutdown?vm_type=${type}`, { method: 'POST' }),
-    rebootVm: (node: string, vmid: number, type = 'qemu') =>
-      request<{ task: string }>(`/api/plugins/proxmox/nodes/${node}/vms/${vmid}/reboot?vm_type=${type}`, { method: 'POST' }),
+  // Proxmox — instance-aware factory
+  proxmox: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/proxmox' : `/api/plugins/proxmox/${instanceId}`
+    return {
+      nodes: () => request<{ nodes: ProxmoxNode[] }>(`${p}/nodes`),
+      allVms: () => request<{ vms: ProxmoxVM[] }>(`${p}/vms`),
+      nodeVms: (node: string) => request<{ vms: ProxmoxVM[] }>(`${p}/nodes/${node}/vms`),
+      storage: () => request<{ storage: ProxmoxStorage[] }>(`${p}/storage`),
+      startVm: (node: string, vmid: number, type = 'qemu') =>
+        request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/start?vm_type=${type}`, { method: 'POST' }),
+      stopVm: (node: string, vmid: number, type = 'qemu') =>
+        request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/stop?vm_type=${type}`, { method: 'POST' }),
+      shutdownVm: (node: string, vmid: number, type = 'qemu') =>
+        request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/shutdown?vm_type=${type}`, { method: 'POST' }),
+      rebootVm: (node: string, vmid: number, type = 'qemu') =>
+        request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/reboot?vm_type=${type}`, { method: 'POST' }),
+    }
   },
 
-  // AdGuard Home
-  adguard: {
-    stats: () => request<AdGuardStats>('/api/plugins/adguard/stats'),
-    status: () => request<AdGuardStatus>('/api/plugins/adguard/status'),
-    querylog: (limit = 100) => request<AdGuardQueryLog>(`/api/plugins/adguard/querylog?limit=${limit}`),
-    setProtection: (enabled: boolean) =>
-      request<{ message: string }>('/api/plugins/adguard/protection', {
-        method: 'POST',
-        body: JSON.stringify({ enabled }),
+  // AdGuard Home — instance-aware factory
+  adguard: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/adguard' : `/api/plugins/adguard/${instanceId}`
+    return {
+      stats: () => request<AdGuardStats>(`${p}/stats`),
+      status: () => request<AdGuardStatus>(`${p}/status`),
+      querylog: (limit = 100) => request<AdGuardQueryLog>(`${p}/querylog?limit=${limit}`),
+      setProtection: (enabled: boolean) =>
+        request<{ message: string }>(`${p}/protection`, {
+          method: 'POST',
+          body: JSON.stringify({ enabled }),
+        }),
+    }
+  },
+
+  // Pi-hole — instance-aware factory
+  pihole: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/pihole' : `/api/plugins/pihole/${instanceId}`
+    return {
+      stats: () => request<PiHoleStats>(`${p}/stats`),
+      querylog: (limit = 100) => request<PiHoleQueryLog>(`${p}/querylog?limit=${limit}`),
+      setBlocking: (enabled: boolean) =>
+        request<{ message: string }>(`${p}/blocking`, {
+          method: 'POST',
+          body: JSON.stringify({ enabled }),
+        }),
+    }
+  },
+
+  // Tailscale — instance-aware factory
+  tailscale: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/tailscale' : `/api/plugins/tailscale/${instanceId}`
+    return {
+      devices: () => request<{ devices: TailscaleDevice[] }>(`${p}/devices`),
+      users:   () => request<{ users: TailscaleUser[] }>(`${p}/users`),
+      dns:     () => request<TailscaleDNS>(`${p}/dns`),
+      acl:     () => fetch(`${p}/acl`, { credentials: 'include' }).then((r) => {
+        if (!r.ok) return r.json().then((e) => Promise.reject(new Error(e.detail ?? 'Failed to load ACL')))
+        return r.text()
       }),
-  },
-
-  // Pi-hole
-  pihole: {
-    stats: () => request<PiHoleStats>('/api/plugins/pihole/stats'),
-    querylog: (limit = 100) => request<PiHoleQueryLog>(`/api/plugins/pihole/querylog?limit=${limit}`),
-    setBlocking: (enabled: boolean) =>
-      request<{ message: string }>('/api/plugins/pihole/blocking', {
+      saveAcl: (acl: string) => request<{ message: string }>(`${p}/acl`, {
         method: 'POST',
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ acl }),
       }),
+      localStatus: () => request<TailscaleLocalStatus>(`${p}/status`),
+    }
   },
 
-  // Tailscale
-  tailscale: {
-    devices: () => request<{ devices: TailscaleDevice[] }>('/api/plugins/tailscale/devices'),
-  },
-
-  // UniFi
-  unifi: {
-    clients: () => request<{ clients: UniFiClient[] }>('/api/plugins/unifi/clients'),
-    kickClient: (clientId: string) =>
-      request<{ message: string }>(`/api/plugins/unifi/clients/${encodeURIComponent(clientId)}/kick`, { method: 'POST' }),
-    devices: () => request<{ devices: UniFiDevice[] }>('/api/plugins/unifi/devices'),
-    ports: () => request<{ ports: UniFiPort[] }>('/api/plugins/unifi/ports'),
-    networks: () => request<{ networks: UniFiNetwork[] }>('/api/plugins/unifi/networks'),
-    wlans: () => request<{ wlans: UniFiWlan[] }>('/api/plugins/unifi/wlans'),
-    firewall: () => request<{ rules: UniFiFirewallRule[]; groups: UniFiFirewallGroup[]; zones: UniFiZone[] }>('/api/plugins/unifi/firewall'),
+  // UniFi — instance-aware factory
+  unifi: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/unifi' : `/api/plugins/unifi/${instanceId}`
+    return {
+      clients: () => request<{ clients: UniFiClient[] }>(`${p}/clients`),
+      kickClient: (clientId: string) =>
+        request<{ message: string }>(`${p}/clients/${encodeURIComponent(clientId)}/kick`, { method: 'POST' }),
+      devices: () => request<{ devices: UniFiDevice[] }>(`${p}/devices`),
+      ports: () => request<{ ports: UniFiPort[] }>(`${p}/ports`),
+      networks: () => request<{ networks: UniFiNetwork[] }>(`${p}/networks`),
+      wlans: () => request<{ wlans: UniFiWlan[] }>(`${p}/wlans`),
+      firewall: () => request<{ rules: UniFiFirewallRule[]; groups: UniFiFirewallGroup[]; zones: UniFiZone[] }>(`${p}/firewall`),
+    }
   },
 
   // Settings
@@ -141,10 +193,13 @@ export interface User {
   id: number
   username: string
   is_admin: boolean
+  needs_setup: boolean
 }
 
 export interface PluginListItem {
   plugin_id: string
+  instance_id: string
+  instance_label: string | null
   display_name: string
   description: string
   version: string
@@ -163,6 +218,7 @@ export interface PluginDetail extends PluginListItem {
 
 export interface PluginSummary {
   plugin_id: string
+  instance_id: string
   status: string
   [key: string]: unknown
 }
@@ -271,6 +327,39 @@ export interface TailscaleDevice {
   authorized: boolean
   updateAvailable: boolean     // requires ?fields=all
   tags?: string[]
+  keyExpiryDisabled: boolean
+  expires?: string
+  advertisedRoutes?: string[]
+  enabledRoutes?: string[]
+}
+
+export interface TailscaleUser {
+  id: string
+  loginName: string
+  displayName: string
+  profilePicUrl?: string
+  created?: string
+  role: string
+  status: string
+  type?: string
+}
+
+export interface TailscaleDNS {
+  nameservers: string[]
+  searchPaths: string[]
+  magicDNS: boolean
+  domains: string[]
+}
+
+export interface TailscaleLocalStatus {
+  available: boolean
+  backend_state?: string
+  ipv4?: string | null
+  ipv6?: string | null
+  hostname?: string
+  dns_name?: string
+  online: boolean
+  tailscale_ips: string[]
 }
 
 // --- UniFi types ---
@@ -312,6 +401,7 @@ export interface UniFiPort {
   device_name: string
   idx: number
   name: string
+  description: string
   state: string         // "UP" | "DOWN"
   connector: string
   speed_mbps: number
@@ -319,7 +409,6 @@ export interface UniFiPort {
   poe_enabled: boolean
   poe_standard: string
   poe_state: string
-  // Session API extras
   vlan: number
   rx_bytes: number
   tx_bytes: number

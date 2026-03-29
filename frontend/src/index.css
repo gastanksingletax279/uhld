@@ -2,6 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme variables ──────────────────────────────────────────────────────────
+   Dark is the default (no class). Light mode is activated by adding the
+   `.light` class to <html>. All Tailwind custom colors reference these vars,
+   so every component adapts automatically with zero per-component changes.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Dark theme (default) */
+  --color-surface:   #0f1117;
+  --color-surface-1: #161b22;
+  --color-surface-2: #1c2128;
+  --color-surface-3: #21262d;
+  --color-surface-4: #30363d;
+
+  --color-accent:     #58a6ff;
+  --color-accent-dim: #1f6feb;
+
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-danger:  #f85149;
+  --color-muted:   #8b949e;
+
+  /* Gray scale — dark: light grays for text on dark bg */
+  --color-gray-100: #f0f6fc;
+  --color-gray-200: #c9d1d9;
+  --color-gray-300: #b1bac4;
+  --color-gray-400: #8b949e;
+}
+
+html.light {
+  /* Light theme */
+  --color-surface:   #f6f8fa;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #ffffff;
+  --color-surface-3: #f6f8fa;
+  --color-surface-4: #d0d7de;
+
+  --color-accent:     #0969da;
+  --color-accent-dim: #0550ae;
+
+  --color-success: #1a7f37;
+  --color-warning: #9a6700;
+  --color-danger:  #cf222e;
+  --color-muted:   #636c76;
+
+  /* Gray scale — light: dark grays for text on light bg */
+  --color-gray-100: #1f2328;
+  --color-gray-200: #24292f;
+  --color-gray-300: #57606a;
+  --color-gray-400: #6e7781;
+}
+
 @layer base {
   html {
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
@@ -40,11 +92,15 @@
   }
 
   .btn-ghost {
-    @apply btn bg-transparent hover:bg-surface-3 text-gray-300 hover:text-white border border-surface-4;
+    @apply btn bg-transparent hover:bg-surface-3 text-gray-300 hover:text-gray-100 border border-surface-4;
   }
 
   .btn-danger {
-    @apply btn bg-transparent hover:bg-danger/20 text-danger border border-danger/40;
+    @apply btn bg-transparent text-danger;
+    border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
   }
 
   .badge {
@@ -52,15 +108,18 @@
   }
 
   .badge-ok {
-    @apply badge bg-success/20 text-success;
+    @apply badge text-success;
+    background-color: color-mix(in srgb, var(--color-success) 20%, transparent);
   }
 
   .badge-error {
-    @apply badge bg-danger/20 text-danger;
+    @apply badge text-danger;
+    background-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
   }
 
   .badge-warning {
-    @apply badge bg-warning/20 text-warning;
+    @apply badge text-warning;
+    background-color: color-mix(in srgb, var(--color-warning) 20%, transparent);
   }
 
   .badge-muted {

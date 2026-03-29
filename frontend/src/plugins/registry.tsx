@@ -18,7 +18,7 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   unifi: UniFiWidget,
 }
 
-export const PLUGIN_VIEWS: Record<string, React.ComponentType> = {
+export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
   proxmox: ProxmoxView,
   adguard: AdGuardView,
   pihole: PiHoleView,

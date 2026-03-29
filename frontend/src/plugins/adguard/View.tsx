@@ -4,7 +4,8 @@ import { RefreshCw, Shield, ShieldOff, Loader2, AlertCircle } from 'lucide-react
 
 type Tab = 'overview' | 'querylog'
 
-export function AdGuardView() {
+export function AdGuardView({ instanceId = 'default' }: { instanceId?: string }) {
+  const adguard = api.adguard(instanceId)
   const [tab, setTab] = useState<Tab>('overview')
   const [stats, setStats] = useState<AdGuardStats | null>(null)
   const [status, setStatus] = useState<AdGuardStatus | null>(null)
@@ -19,8 +20,8 @@ export function AdGuardView() {
     setError(null)
     try {
       const [statsData, statusData] = await Promise.all([
-        api.adguard.stats(),
-        api.adguard.status(),
+        adguard.stats(),
+        adguard.status(),
       ])
       setStats(statsData)
       setStatus(statusData)
@@ -34,7 +35,7 @@ export function AdGuardView() {
   async function loadQueryLog() {
     setLogLoading(true)
     try {
-      const data = await api.adguard.querylog(200)
+      const data = await adguard.querylog(200)
       setQuerylog(data.data ?? [])
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load query log')
@@ -63,7 +64,7 @@ export function AdGuardView() {
     if (!status) return
     setToggling(true)
     try {
-      await api.adguard.setProtection(!status.protection_enabled)
+      await adguard.setProtection(!status.protection_enabled)
       await loadOverview()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Toggle failed')

@@ -105,7 +105,6 @@ class TailscalePlugin(PluginBase):
         try:
             devices = await self._fetch_devices()
             total = len(devices)
-            # Tailscale API uses `connectedToControl` (not `online`) — requires ?fields=all
             online = sum(1 for d in devices if d.get("connectedToControl", False))
             result = {
                 "status": "ok",
@@ -119,14 +118,69 @@ class TailscalePlugin(PluginBase):
             await self._close_client()
             return {"status": "error", "message": str(exc)}
 
+    # ── Data fetchers ─────────────────────────────────────────────────────────
+
     async def _fetch_devices(self) -> list[dict]:
         client = self._get_client()
         tailnet = self._tailnet()
-        # fields=all is required to get `online` and `updateAvailable` per device
         resp = await client.get(f"/api/v2/tailnet/{tailnet}/devices?fields=all")
         resp.raise_for_status()
         return resp.json().get("devices", [])
 
+    async def _fetch_users(self) -> list[dict]:
+        client = self._get_client()
+        tailnet = self._tailnet()
+        resp = await client.get(f"/api/v2/tailnet/{tailnet}/users")
+        resp.raise_for_status()
+        return resp.json().get("users", [])
+
+    async def _fetch_dns(self) -> dict:
+        client = self._get_client()
+        tailnet = self._tailnet()
+        ns_resp, sp_resp, prefs_resp = await _gather(
+            client.get(f"/api/v2/tailnet/{tailnet}/dns/nameservers"),
+            client.get(f"/api/v2/tailnet/{tailnet}/dns/searchpaths"),
+            client.get(f"/api/v2/tailnet/{tailnet}/dns/preferences"),
+        )
+        ns_resp.raise_for_status()
+        sp_resp.raise_for_status()
+        prefs_resp.raise_for_status()
+        return {
+            "nameservers": ns_resp.json().get("dns", []),
+            "searchPaths": sp_resp.json().get("searchPaths", []),
+            "magicDNS": prefs_resp.json().get("magicDNS", False),
+            "domains": sp_resp.json().get("searchPaths", []),
+        }
+
+    async def _fetch_acl(self) -> str:
+        """Return raw ACL as HuJSON text."""
+        client = self._get_client()
+        tailnet = self._tailnet()
+        resp = await client.get(
+            f"/api/v2/tailnet/{tailnet}/acl",
+            headers={"Accept": "application/hujson"},
+        )
+        resp.raise_for_status()
+        return resp.text
+
+    async def _save_acl(self, acl_text: str) -> dict:
+        """POST updated ACL. acl_text may be HuJSON or strict JSON."""
+        client = self._get_client()
+        tailnet = self._tailnet()
+        resp = await client.post(
+            f"/api/v2/tailnet/{tailnet}/acl",
+            content=acl_text.encode(),
+            headers={"Content-Type": "application/hujson"},
+        )
+        resp.raise_for_status()
+        return {"message": "ACL saved"}
+
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.tailscale.api import make_router
         return make_router(self)
+
+
+async def _gather(*coros):
+    """Run coroutines concurrently (asyncio.gather without importing at module level)."""
+    import asyncio
+    return await asyncio.gather(*coros)

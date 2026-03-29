@@ -16,7 +16,7 @@ export function PluginWidget({ pluginId, summary }: Props) {
 
 function GenericSummary({ summary }: { summary: PluginSummary }) {
   const entries = Object.entries(summary).filter(
-    ([k]) => !['plugin_id', 'status', 'message'].includes(k)
+    ([k]) => !['plugin_id', 'instance_id', 'status', 'message'].includes(k)
   )
   if (entries.length === 0) return <p className="text-xs text-muted">No data</p>
   return (

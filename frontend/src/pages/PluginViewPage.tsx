@@ -2,7 +2,7 @@ import { useParams, Navigate } from 'react-router-dom'
 import { PLUGIN_VIEWS } from '../plugins/registry'
 
 export function PluginViewPage() {
-  const { pluginId } = useParams<{ pluginId: string }>()
+  const { pluginId, instanceId = 'default' } = useParams<{ pluginId: string; instanceId?: string }>()
   const View = pluginId ? PLUGIN_VIEWS[pluginId] : undefined
 
   if (!View) {
@@ -13,5 +13,5 @@ export function PluginViewPage() {
     )
   }
 
-  return <View />
+  return <View instanceId={instanceId} />
 }

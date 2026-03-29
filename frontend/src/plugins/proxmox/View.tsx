@@ -6,7 +6,8 @@ type Tab = 'nodes' | 'vms' | 'storage'
 type SortDir = 'asc' | 'desc'
 type VmSortKey = 'name' | 'vmid' | 'node' | 'type' | 'status' | 'cpu' | 'mem' | 'uptime'
 
-export function ProxmoxView() {
+export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string }) {
+  const proxmox = api.proxmox(instanceId)
   const [tab, setTab] = useState<Tab>('nodes')
   const [nodes, setNodes] = useState<ProxmoxNode[]>([])
   const [vms, setVms] = useState<ProxmoxVM[]>([])
@@ -23,16 +24,16 @@ export function ProxmoxView() {
     const errs: Record<string, string> = {}
 
     await Promise.all([
-      api.proxmox.nodes()
+      proxmox.nodes()
         .then((r) => setNodes([...r.nodes].sort((a, b) => a.node.localeCompare(b.node))))
         .catch((e: unknown) => { errs.nodes = e instanceof Error ? e.message : 'Failed' }),
-      api.proxmox.allVms()
+      proxmox.allVms()
         .then((r) => setVms(r.vms))
         .catch((e: unknown) => { errs.vms = e instanceof Error ? e.message : 'Failed' }),
-      api.proxmox.storage()
+      proxmox.storage()
         .then((r) => setStorage(r.storage))
         .catch((e: unknown) => { errs.storage = e instanceof Error ? e.message : 'Failed' }),
-      api.getPlugin('proxmox')
+      api.getPlugin('proxmox', instanceId)
         .then((detail) => {
           const cfg = detail.config
           if (cfg?.host) {
@@ -53,9 +54,10 @@ export function ProxmoxView() {
     const key = `${vm.node}-${vm.vmid}-${action}`
     setActionLoading(key)
     try {
-      await api.proxmox[`${action}Vm`](vm.node, vm.vmid, vm.type)
+      const actionFn = proxmox[`${action}Vm` as keyof typeof proxmox] as (node: string, vmid: number, type?: string) => Promise<unknown>
+      await actionFn(vm.node, vm.vmid, vm.type)
       await new Promise((r) => setTimeout(r, 1500))
-      const res = await api.proxmox.allVms()
+      const res = await proxmox.allVms()
       setVms(res.vms)
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Action failed')

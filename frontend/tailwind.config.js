@@ -4,22 +4,30 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Dark industrial palette
+        // All surface/text/accent colors are CSS-var backed so dark↔light toggle
+        // requires zero changes to any component.
         surface: {
-          DEFAULT: '#0f1117',
-          1: '#161b22',
-          2: '#1c2128',
-          3: '#21262d',
-          4: '#30363d',
+          DEFAULT: 'var(--color-surface)',
+          1: 'var(--color-surface-1)',
+          2: 'var(--color-surface-2)',
+          3: 'var(--color-surface-3)',
+          4: 'var(--color-surface-4)',
         },
         accent: {
-          DEFAULT: '#58a6ff',
-          dim: '#1f6feb',
+          DEFAULT: 'var(--color-accent)',
+          dim: 'var(--color-accent-dim)',
         },
-        success: '#3fb950',
-        warning: '#d29922',
-        danger: '#f85149',
-        muted: '#8b949e',
+        success: 'var(--color-success)',
+        warning: 'var(--color-warning)',
+        danger: 'var(--color-danger)',
+        muted: 'var(--color-muted)',
+        // Override Tailwind's gray scale with CSS vars so text-gray-* adapts
+        gray: {
+          100: 'var(--color-gray-100)',
+          200: 'var(--color-gray-200)',
+          300: 'var(--color-gray-300)',
+          400: 'var(--color-gray-400)',
+        },
       },
       fontFamily: {
         mono: ['JetBrains Mono', 'Fira Code', 'Cascadia Code', 'monospace'],

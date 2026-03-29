@@ -66,7 +66,8 @@ function SectionLoader() {
 
 // ── Main view ──────────────────────────────────────────────────────────────────
 
-export function UniFiView() {
+export function UniFiView({ instanceId = 'default' }: { instanceId?: string }) {
+  const unifi = api.unifi(instanceId)
   const [tab, setTab] = useState<Tab>('clients')
 
   const [clients, setClients] = useState<UniFiClient[]>([])
@@ -101,35 +102,35 @@ export function UniFiView() {
 
   async function loadClients() {
     setClientsLoading(true); setClientsError(null)
-    try { setClients((await api.unifi.clients()).clients ?? []) }
+    try { setClients((await unifi.clients()).clients ?? []) }
     catch (e: unknown) { setClientsError(e instanceof Error ? e.message : 'Failed to load clients') }
     finally { setClientsLoading(false) }
   }
 
   async function loadDevices() {
     setDevicesLoading(true); setDevicesError(null)
-    try { setDevices((await api.unifi.devices()).devices ?? []) }
+    try { setDevices((await unifi.devices()).devices ?? []) }
     catch (e: unknown) { setDevicesError(e instanceof Error ? e.message : 'Failed to load devices') }
     finally { setDevicesLoading(false) }
   }
 
   async function loadPorts() {
     setPortsLoading(true); setPortsError(null)
-    try { setPorts((await api.unifi.ports()).ports ?? []); setPortsLoaded(true) }
+    try { setPorts((await unifi.ports()).ports ?? []); setPortsLoaded(true) }
     catch (e: unknown) { setPortsError(e instanceof Error ? e.message : 'Failed to load ports') }
     finally { setPortsLoading(false) }
   }
 
   async function loadNetworks() {
     setNetworksLoading(true); setNetworksError(null)
-    try { setNetworks((await api.unifi.networks()).networks ?? []); setNetworksLoaded(true) }
+    try { setNetworks((await unifi.networks()).networks ?? []); setNetworksLoaded(true) }
     catch (e: unknown) { setNetworksError(e instanceof Error ? e.message : 'Failed to load networks') }
     finally { setNetworksLoading(false) }
   }
 
   async function loadWlans() {
     setWlansLoading(true); setWlansError(null)
-    try { setWlans((await api.unifi.wlans()).wlans ?? []); setWlansLoaded(true) }
+    try { setWlans((await unifi.wlans()).wlans ?? []); setWlansLoaded(true) }
     catch (e: unknown) { setWlansError(e instanceof Error ? e.message : 'Failed to load WiFi') }
     finally { setWlansLoading(false) }
   }
@@ -137,7 +138,7 @@ export function UniFiView() {
   async function loadFirewall() {
     setFirewallLoading(true); setFirewallError(null)
     try {
-      const r = await api.unifi.firewall()
+      const r = await unifi.firewall()
       setFwRules(r.rules ?? []); setFwGroups(r.groups ?? []); setFwZones(r.zones ?? [])
       setFirewallLoaded(true)
     }
@@ -214,7 +215,7 @@ export function UniFiView() {
         ))}
       </div>
 
-      {tab === 'clients'  && (clientsLoading  ? <SectionLoader /> : clientsError  ? <SectionError msg={clientsError} />  : <ClientsTab  clients={clients}  onRefresh={loadClients} />)}
+      {tab === 'clients'  && (clientsLoading  ? <SectionLoader /> : clientsError  ? <SectionError msg={clientsError} />  : <ClientsTab  clients={clients}  onRefresh={loadClients} onKick={(id) => unifi.kickClient(id)} />)}
       {tab === 'devices'  && (devicesLoading  ? <SectionLoader /> : devicesError  ? <SectionError msg={devicesError} />  : <DevicesTab  devices={devices} />)}
       {tab === 'ports'    && (portsLoading    ? <SectionLoader /> : portsError    ? <SectionError msg={portsError} />    : <PortsTab    ports={ports} />)}
       {tab === 'networks' && (networksLoading ? <SectionLoader /> : networksError ? <SectionError msg={networksError} /> : <NetworksTab networks={networks} />)}
@@ -229,7 +230,7 @@ export function UniFiView() {
 type ClientSortKey = 'hostname' | 'type' | 'ip' | 'essid' | 'rssi' | 'rx_bytes' | 'tx_bytes' | 'uptime' | 'connected_at'
 type ClientFilter  = 'all' | 'wifi' | 'wired' | 'vpn'
 
-function ClientsTab({ clients, onRefresh }: { clients: UniFiClient[]; onRefresh: () => void }) {
+function ClientsTab({ clients, onRefresh, onKick }: { clients: UniFiClient[]; onRefresh: () => void; onKick: (id: string) => Promise<unknown> }) {
   const [filter, setFilter]   = useState<ClientFilter>('all')
   const [sortKey, setSortKey] = useState<ClientSortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
@@ -308,7 +309,7 @@ function ClientsTab({ clients, onRefresh }: { clients: UniFiClient[]; onRefresh:
           </thead>
           <tbody>
             {sorted.map((c) => (
-              <ClientRow key={c.id || c.mac} client={c} onRefresh={onRefresh}
+              <ClientRow key={c.id || c.mac} client={c} onRefresh={onRefresh} onKick={onKick}
                 hasBytes={hasBytes} hasUptime={hasUptime} hasConnected={hasConnected} hasRssi={hasRssi} />
             ))}
           </tbody>
@@ -319,9 +320,9 @@ function ClientsTab({ clients, onRefresh }: { clients: UniFiClient[]; onRefresh:
 }
 
 function ClientRow({
-  client: c, onRefresh, hasBytes, hasUptime, hasConnected, hasRssi,
+  client: c, onRefresh, onKick, hasBytes, hasUptime, hasConnected, hasRssi,
 }: {
-  client: UniFiClient; onRefresh: () => void
+  client: UniFiClient; onRefresh: () => void; onKick: (id: string) => Promise<unknown>
   hasBytes: boolean; hasUptime: boolean; hasConnected: boolean; hasRssi: boolean
 }) {
   const [kicking, setKicking] = useState(false)
@@ -331,7 +332,7 @@ function ClientRow({
     if (!window.confirm(`Bounce ${c.hostname || c.mac}? This will force them to reconnect.`)) return
     setKicking(true); setKickMsg(null)
     try {
-      await api.unifi.kickClient(c.id || c.mac)
+      await onKick(c.id || c.mac)
       setKickMsg('done')
       setTimeout(() => { setKickMsg(null); onRefresh() }, 1500)
     } catch (e: unknown) {
@@ -495,9 +496,8 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
     return acc
   }, {})
 
-  const hasVlan    = ports.some((p) => p.vlan > 0)
-  const hasBytes   = ports.some((p) => p.rx_bytes > 0 || p.tx_bytes > 0)
-  const hasPoe     = ports.some((p) => p.poe_enabled)
+  const hasBytes     = ports.some((p) => p.rx_bytes > 0 || p.tx_bytes > 0)
+  const hasPoe       = ports.some((p) => p.poe_enabled)
   const hasConnector = ports.some((p) => p.connector)
 
   return (
@@ -509,13 +509,13 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
             <thead>
               <tr className="border-b border-surface-4 text-muted">
                 <th className="px-3 py-2 text-right font-medium w-10">#</th>
-                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Description</th>
                 <th className="px-3 py-2 text-left font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium">Speed</th>
                 <th className="px-3 py-2 text-right font-medium">Max</th>
                 {hasConnector && <th className="px-3 py-2 text-left font-medium">Type</th>}
                 {hasPoe       && <th className="px-3 py-2 text-left font-medium">PoE</th>}
-                {hasVlan      && <th className="px-3 py-2 text-right font-medium">VLAN</th>}
+                <th className="px-3 py-2 text-right font-medium">VLAN</th>
                 {hasBytes     && <th className="px-3 py-2 text-right font-medium">TX</th>}
                 {hasBytes     && <th className="px-3 py-2 text-right font-medium">RX</th>}
               </tr>
@@ -524,7 +524,12 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
               {[...dPorts].sort((a, b) => a.idx - b.idx).map((p) => (
                 <tr key={`${p.device_id}-${p.idx}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
                   <td className="px-3 py-2 text-right font-mono text-muted">{p.idx}</td>
-                  <td className="px-3 py-2 text-gray-300">{p.name || `Port ${p.idx}`}</td>
+                  <td className="px-3 py-2">
+                    <div className="text-gray-300">{p.description || p.name || `Port ${p.idx}`}</div>
+                    {p.description && p.name && p.description !== p.name && (
+                      <div className="text-muted text-[10px]">{p.name}</div>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     {p.state === 'UP'
                       ? <span className="badge-ok">up</span>
@@ -546,7 +551,7 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
                         : <span className="text-muted">—</span>}
                     </td>
                   )}
-                  {hasVlan  && <td className="px-3 py-2 text-right font-mono text-muted">{p.vlan > 0 ? p.vlan : '—'}</td>}
+                  <td className="px-3 py-2 text-right font-mono text-muted">{p.vlan > 0 ? p.vlan : '—'}</td>
                   {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.tx_bytes)}</td>}
                   {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.rx_bytes)}</td>}
                 </tr>

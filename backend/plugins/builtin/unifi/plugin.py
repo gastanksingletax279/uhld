@@ -383,11 +383,14 @@ class UniFiPlugin(PluginBase):
                 port_list = ifaces.get("ports", []) if isinstance(ifaces, dict) else []
                 for p in port_list:
                     poe = p.get("poe") or {}
+                    # Try several field names the v1 API may use for VLAN
+                    vlan_id = int(p.get("vlanId", p.get("nativeVlanId", p.get("vlan", 0))) or 0)
                     ports.append({
                         "device_id": d["id"],
                         "device_name": device_name,
                         "idx": int(p.get("idx", 0)),
                         "name": p.get("name", ""),
+                        "description": p.get("description", p.get("note", "")),
                         "state": p.get("state", "DOWN"),
                         "connector": p.get("connector", ""),
                         "speed_mbps": int(p.get("speedMbps", 0)),
@@ -395,7 +398,7 @@ class UniFiPlugin(PluginBase):
                         "poe_enabled": bool(poe.get("enabled", False)),
                         "poe_standard": poe.get("standard", ""),
                         "poe_state": poe.get("state", ""),
-                        "vlan": 0,
+                        "vlan": vlan_id,
                         "rx_bytes": 0,
                         "tx_bytes": 0,
                         "full_duplex": False,
@@ -417,6 +420,7 @@ class UniFiPlugin(PluginBase):
                     "device_name": device_name,
                     "idx": int(p.get("port_idx", 0)),
                     "name": p.get("name", ""),
+                    "description": p.get("name", ""),
                     "state": "UP" if p.get("up") else "DOWN",
                     "connector": "RJ45",
                     "speed_mbps": int(p.get("speed", 0)),

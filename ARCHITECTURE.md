@@ -359,7 +359,7 @@ GET  /api/plugins/ipmi/sel                    # system event log entries
 
 ### Dashboard Page
 
-The main dashboard renders a responsive grid of **WidgetCard** components, one per enabled plugin. Each card shows the plugin's `get_summary()` data in a compact format. Layout is configurable (drag-to-reorder, resize — phase 2).
+The main dashboard renders a responsive grid of **WidgetCard** components, one per enabled plugin instance. Each card shows the plugin's `get_summary()` data in a compact format. An **Edit Layout** button activates drag-to-reorder mode (dnd-kit); order is persisted to localStorage keyed by `{plugin_id}:{instance_id}`.
 
 ### Plugin Pages
 
@@ -369,9 +369,9 @@ Each enabled plugin appears in the sidebar. Clicking it renders the plugin's ful
 
 `Settings → Plugins` shows all available plugins in a grid with category filters. Each plugin card shows:
 - Icon, name, category, description
-- Status badge (enabled / disabled / error)
-- Enable/Disable toggle
-- Configure button (opens modal with auto-rendered config form from `config_schema`)
+- All enabled instances with per-instance Configure / Disable / Delete buttons
+- **Add instance** button to create additional instances with a custom `instance_id` slug and display label
+- Enable button for disabled plugins (enables the `default` instance)
 
 ### Dynamic Config Form Rendering
 
@@ -396,7 +396,7 @@ This means no per-plugin frontend config code is ever needed.
 | **Proxmox VE** | Virtualization | ✅ Complete | `proxmoxer` |
 | **AdGuard Home** | Network/DNS | ✅ Complete | REST API (httpx) |
 | **Pi-hole** | Network/DNS | ✅ Complete | Pi-hole API (httpx) |
-| **Tailscale** | Network | ✅ Complete | Tailscale API (httpx) |
+| **Tailscale** | Network | ✅ Complete | Tailscale API v2 (httpx) + local Unix socket |
 | **UniFi** | Network | ✅ Complete | UniFi Integration v1 API (httpx) |
 | **Docker** | Containers | Planned | `docker` (Docker SDK) |
 | **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
@@ -624,7 +624,9 @@ When implementing UHLD, follow these rules:
 
 ### Sprint 6: Polish
 - [ ] Notifications (Telegram, email, webhook)
-- [ ] Dashboard widget grid (drag-to-reorder)
-- [ ] Dark/light theme
+- [x] Dashboard widget grid (drag-to-reorder) — dnd-kit, Edit Layout mode, localStorage persistence
+- [x] Dark/light theme — CSS-var-backed Tailwind, Sun/Moon toggle in TopNav and LoginPage
+- [x] First-launch admin setup — auto-creates admin/admin, forced password change modal
+- [x] Multi-instance plugin support — per-instance DB rows, routes, registry, and settings UI
 - [ ] k8s manifests
 - [ ] GitHub Actions Docker publish workflow

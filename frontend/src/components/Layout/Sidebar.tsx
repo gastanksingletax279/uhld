@@ -47,10 +47,12 @@ export function Sidebar() {
             </div>
             {byCategory[cat].map((p) => (
               <SidebarLink
-                key={p.plugin_id}
-                to={`/plugins/${p.plugin_id}`}
+                key={`${p.plugin_id}:${p.instance_id}`}
+                to={p.instance_id === 'default' ? `/plugins/${p.plugin_id}` : `/plugins/${p.plugin_id}/${p.instance_id}`}
                 icon={<PluginIcon name={p.icon} className="w-4 h-4" />}
-                label={p.display_name}
+                label={p.instance_id === 'default'
+                  ? p.display_name
+                  : `${p.display_name} — ${p.instance_label || p.instance_id}`}
                 healthStatus={p.health_status}
               />
             ))}

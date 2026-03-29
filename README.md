@@ -13,32 +13,39 @@ A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Prox
 UHLD is the homelab equivalent of Home Assistant — but for infrastructure instead of home automation. Deploy it as a single Docker container, enable plugins for the services you run, and get a unified dashboard to monitor and interact with your entire homelab from one place.
 
 - **Plugin-first** — every integration is a plugin, nothing is hardcoded
+- **Multi-instance** — run multiple instances of any plugin (two Proxmox clusters, two UniFi controllers, etc.)
 - **Read/monitor by default** — write and action operations always require explicit intent
 - **Single container** — FastAPI backend + React frontend, one Docker image
 - **Credential encryption** — all plugin secrets are encrypted at rest
+- **Light/dark theme** — CSS-variable-backed adaptive theme with toggle
+- **Drag-to-reorder dashboard** — customizable widget layout persisted per-browser
 
 ---
 
 ## Current Status
 
-| Sprint | Status |
-|--------|--------|
-| Core framework (auth, plugin registry, settings) | Complete |
-| Proxmox VE plugin (nodes, VMs, storage, start/stop/reboot) | Complete |
-| AdGuard Home plugin (stats, query log, protection toggle) | Complete |
-| Pi-hole plugin (stats, query log, blocking toggle) | Complete |
-| Tailscale plugin (device list, online status) | Complete |
-| UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | Complete |
+| Feature | Status |
+|---------|--------|
+| Core framework (auth, plugin registry, settings) | ✅ Complete |
+| First-launch setup (auto admin/admin, forced password change) | ✅ Complete |
+| Light / dark mode toggle | ✅ Complete |
+| Drag-to-reorder dashboard tiles | ✅ Complete |
+| Multi-instance plugin support | ✅ Complete |
+| Proxmox VE plugin (nodes, VMs, storage, start/stop/reboot) | ✅ Complete |
+| AdGuard Home plugin (stats, query log, protection toggle) | ✅ Complete |
+| Pi-hole plugin (stats, query log, blocking toggle) | ✅ Complete |
+| Tailscale plugin (devices, users, DNS, ACL editor, sidecar status) | ✅ Complete |
+| UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | ✅ Complete |
 | Docker / Kubernetes | Planned |
 | Plex / Jellyfin / TrueNAS / Synology | Planned |
-| Notifications, widget grid, k8s manifests | Planned |
+| Notifications, config backup/restore | Planned |
 
 ---
 
 ## Tech Stack
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy async + aiosqlite, APScheduler
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, Recharts
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, dnd-kit
 - **Auth:** JWT (httpOnly cookie), bcrypt
 - **Storage:** SQLite — zero external dependencies
 - **Deployment:** Multi-stage Docker (node:20-alpine → python:3.12-slim)
@@ -54,7 +61,7 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 ### Generate secrets
 
 ```bash
-python -c "import secrets; print(secrets.token_hex(32))"          # JWT_SECRET
+python -c "import secrets; print(secrets.token_hex(32))"                               # JWT_SECRET
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
 ```
 
@@ -81,13 +88,9 @@ docker compose up -d
 
 Then open `http://localhost:8222`.
 
-### Create your first user
+### First login
 
-```bash
-docker exec -it uhld python -m backend.cli create-user admin yourpassword
-```
-
-> **Default credentials:** No default credentials are set. You must create your first user via the CLI before logging in.
+On first launch UHLD auto-creates an **`admin` / `admin`** account and immediately prompts you to set a new password before continuing.
 
 ---
 
@@ -105,7 +108,19 @@ docker exec -it uhld python -m backend.cli create-user admin yourpassword
 
 ## Plugin Configuration
 
-Plugins are enabled and configured through the Settings → Plugins page. Each plugin's configuration form is rendered dynamically from its schema — no manual config files required. Sensitive fields (API keys, passwords, tokens) are encrypted before being stored.
+Plugins are enabled and configured through **Settings → Plugins**. Each plugin's form is rendered dynamically from its JSON Schema — no manual config files needed. Sensitive fields (API keys, passwords, tokens) are encrypted before being stored.
+
+### Multi-instance plugins
+
+Any plugin can be enabled more than once with different connection settings. Use the **Add instance** button in Settings → Plugins to add a second instance (e.g., a second Proxmox cluster or UniFi controller). Each instance has its own sidebar entry and dashboard tile.
+
+---
+
+## Tailscale Sidecar (optional)
+
+UHLD can run as a Tailscale node to expose itself over your tailnet with HTTPS via MagicDNS. Use the provided `docker-compose.local.yml` and `build-run-local.sh` as a reference. Requires `TS_AUTHKEY` in `.env.local`.
+
+When a Tailscale sidecar is detected (Unix socket at `/var/run/tailscale/tailscaled.sock`), the Tailscale plugin view shows a live local status bar with node name, IP, and connection state.
 
 ---
 
@@ -120,7 +135,10 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 cd frontend && npm install && npm run dev
 # Vite proxies /api/* to localhost:8000
 
-# Docker build
+# Local Docker build (with Tailscale sidecar)
+./build-run-local.sh   # requires .env.local with TS_AUTHKEY
+
+# Standard Docker build
 ./build-run.sh
 ```
 

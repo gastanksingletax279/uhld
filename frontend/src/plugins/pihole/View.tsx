@@ -4,7 +4,8 @@ import { RefreshCw, Shield, ShieldOff, Loader2, AlertCircle } from 'lucide-react
 
 type Tab = 'overview' | 'querylog'
 
-export function PiHoleView() {
+export function PiHoleView({ instanceId = 'default' }: { instanceId?: string }) {
+  const pihole = api.pihole(instanceId)
   const [tab, setTab] = useState<Tab>('overview')
   const [stats, setStats] = useState<PiHoleStats | null>(null)
   const [querylog, setQuerylog] = useState<PiHoleQueryLogEntry[]>([])
@@ -17,7 +18,7 @@ export function PiHoleView() {
     setLoading(true)
     setError(null)
     try {
-      const data = await api.pihole.stats()
+      const data = await pihole.stats()
       setStats(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load Pi-hole stats')
@@ -29,7 +30,7 @@ export function PiHoleView() {
   async function loadQueryLog() {
     setLogLoading(true)
     try {
-      const data = await api.pihole.querylog(200)
+      const data = await pihole.querylog(200)
       setQuerylog(data.data ?? [])
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load query log')
@@ -58,7 +59,7 @@ export function PiHoleView() {
     if (!stats) return
     setToggling(true)
     try {
-      await api.pihole.setBlocking(!stats.blocking)
+      await pihole.setBlocking(!stats.blocking)
       await loadStats()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Toggle failed')

@@ -101,6 +101,10 @@ Plugin failures must never crash the main app:
 - JWT in httpOnly cookie (`access_token`)
 - Use `Depends(get_current_user)` for read routes
 - Use `Depends(require_admin)` for write/mutating routes
+- On first run `_bootstrap_admin()` auto-creates `admin/admin` and sets `Setting(key="setup_required", value="true")`
+- `GET /api/auth/me` and `POST /api/auth/login` return `needs_setup: bool` on the user object
+- `PUT /api/auth/password` verifies current password, sets new password, clears `setup_required` flag
+- Frontend shows a non-dismissible `ChangePasswordModal` when `user.needs_setup` is true
 
 ## Development
 
@@ -144,21 +148,25 @@ The "Clear Settings" button (in the Configure modal, config mode only) calls `PO
 
 After clearing, the plugin appears as disabled with no stored credentials. The user must re-enable and re-enter config.
 
-## Multi-Instance Plugin Support (Future Architecture)
+## Multi-Instance Plugin Support
 
-Currently each plugin is a singleton — one instance per `plugin_id`. Future work to support multiple instances (e.g. two Proxmox clusters, three Docker hosts):
+Each plugin can have multiple independent instances (e.g. two UniFi controllers, two Proxmox clusters). Each instance is identified by a slug `instance_id` (default: `"default"`).
 
-**Proposed approach:**
-- Add an `instance_id` concept (slug, e.g. `proxmox-home`, `proxmox-work`)
-- `PluginConfig` table gains an `instance_id` column (unique with `plugin_id`)
-- Registry maps `(plugin_id, instance_id)` → instance
-- Routers mounted at `/api/plugins/{plugin_id}/{instance_id}/...`
-- Frontend: plugin views accept `instanceId` route param; switcher in the UI
+**How it works:**
+- `PluginConfig` table has `instance_id` + `instance_label` columns; unique on `(plugin_id, instance_id)`
+- Registry maps `"{plugin_id}:{instance_id}"` → plugin instance
+- Default instance routes: `/api/plugins/{plugin_id}/` (backward-compatible)
+- Additional instances routes: `/api/plugins/{plugin_id}/{instance_id}/`
+- All plugin API endpoints accept `?instance_id=` query param
+- New instance management endpoints: `GET/POST /api/plugins/{id}/instances`, `DELETE /api/plugins/{id}/instances/{instance_id}`
+- Frontend: plugin views accept `instanceId` prop; routes at `/plugins/{pluginId}` and `/plugins/{pluginId}/{instanceId}`
+- Settings UI: lists all instances per plugin with Configure/Disable/Delete per instance + "Add instance" button
+- `migrate_db()` in `database.py` safely adds `instance_id`/`instance_label` to existing databases
 
-**Design rules to follow when adding new plugins:**
+**Design rules when adding new plugins:**
 - All state must live on the plugin instance (no module-level globals)
 - Config is fully self-contained in the instance — no shared singleton state
-- This ensures multi-instance will be a registry/routing change, not a plugin rewrite
+- Frontend `View.tsx` must accept `{ instanceId?: string }` prop and call `api.{plugin}(instanceId)` factory
 
 ## Code Style
 
@@ -173,8 +181,16 @@ Currently each plugin is a singleton — one instance per `plugin_id`. Future wo
 | **Proxmox VE** | API token or user+password (`proxmoxer`) | `builtin/proxmox/` |
 | **AdGuard Home** | Basic auth header | `builtin/adguard/` |
 | **Pi-hole** | API key query param | `builtin/pihole/` |
-| **Tailscale** | Bearer token (Tailscale API) | `builtin/tailscale/` |
+| **Tailscale** | Bearer token (Tailscale API v2) + optional local Unix socket | `builtin/tailscale/` |
 | **UniFi** | Integration v1 `X-API-Key` (primary) + session cookie fallback | `builtin/unifi/` |
+
+### Tailscale Plugin Notes
+
+The Tailscale plugin has two data sources:
+- **Cloud API** (required): Bearer token against `api.tailscale.com/api/v2`. Powers Devices, Users, DNS, and ACL tabs. Requires an API key from the Tailscale admin console.
+- **Local sidecar** (optional): Reads `/var/run/tailscale/tailscaled.sock` (Tailscale local daemon API) to show the container's own node state — backend state, IP addresses, MagicDNS name. Gracefully returns `{ available: false }` when the socket doesn't exist. Used when running UHLD alongside a Tailscale sidecar container.
+
+ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). The frontend ACL editor strips `//` comments for basic client-side validation before saving; the Tailscale API performs the authoritative validation.
 
 ### UniFi Plugin Notes
 

@@ -8,6 +8,7 @@ interface AuthState {
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   fetchMe: () => Promise<void>
+  clearSetupFlag: () => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -38,5 +39,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       set({ user: null, initialized: true })
     }
+  },
+
+  clearSetupFlag: () => {
+    set((state) => state.user ? { user: { ...state.user, needs_setup: false } } : {})
   },
 }))
