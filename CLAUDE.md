@@ -199,6 +199,8 @@ Each plugin can have multiple independent instances (e.g. two UniFi controllers,
 | **Pi-hole** | API key query param | `builtin/pihole/` |
 | **Tailscale** | Bearer token (Tailscale API v2) + optional local Unix socket | `builtin/tailscale/` |
 | **UniFi** | Integration v1 `X-API-Key` (primary) + session cookie fallback | `builtin/unifi/` |
+| **Docker** | None (Unix socket or TCP) | `builtin/docker/` |
+| **Kubernetes** | kubeconfig content/path or in-cluster service account | `builtin/kubernetes/` |
 
 ### Tailscale Plugin Notes
 
@@ -215,3 +217,15 @@ The UniFi plugin supports two authentication paths:
 - **Session auth (fallback):** Uses `username`+`password` cookie login against `/api/s/{site}/...`. Compatible with older hardware and software controllers.
 
 The plugin auto-selects based on whether `api_key` is configured. All `_fetch_*` methods check `self._api_key()` and dispatch to either the v1 or session code path.
+
+### Docker Plugin Notes
+
+Uses `httpx.AsyncHTTPTransport(uds=socket_path)` for Unix socket access — no extra Python dependency. Falls back to TCP `host:port` when `host` is configured. Log streaming strips the 8-byte Docker multiplexed stream header (1 byte stream type + 3 reserved + 4-byte big-endian length) before sending text to the frontend.
+
+### Kubernetes Plugin Notes
+
+- **Kubeconfig:** `kubeconfig_content` (sensitive/textarea, encrypted at rest) takes priority over `kubeconfig_path`. When content is provided it is written to a `tempfile.mkstemp` file on `on_enable` and cleaned up on `on_disable`.
+- **Client API:** Uses the official `kubernetes` Python client (sync), wrapped with `loop.run_in_executor(None, lambda: fn(...))` to avoid blocking the event loop. Only `_core_v1()`, `_apps_v1()`, `_batch_v1()`, `_networking_v1()`, and `_custom_objects()` are used.
+- **Shell exec:** WebSocket bridge at `/pods/{namespace}/{pod}/exec`. The `_read_loop` thread calls `resp.update(timeout=1)` exactly once per iteration, then pops stdout/stderr directly from `resp._channels` dict — bypassing `peek_stdout()`/`peek_stderr()` which each call `update()` internally and trigger RSV WebSocket protocol errors on clusters with per-message deflate. The frontend (`ShellTerminal`) auto-detects the working shell by trying `/bin/bash`, `/bin/sh`, `/bin/ash` etc. in sequence with a 1-second no-data timeout per candidate.
+- **Longhorn / HTTPRoutes:** Fetched via `CustomObjectsApi` (`longhorn.io/v1beta2`, `gateway.networking.k8s.io/v1`). Both return empty lists gracefully if the CRDs are not installed.
+- **YAML editor:** `_get_resource_yaml` serializes via `api_client.sanitize_for_serialization()` and strips `managedFields`. `_apply_resource_yaml` uses strategic merge patch via the appropriate typed API method.

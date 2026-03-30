@@ -36,7 +36,8 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Pi-hole plugin (stats, query log, blocking toggle) | ✅ Complete |
 | Tailscale plugin (devices, users, DNS, ACL editor, sidecar status) | ✅ Complete |
 | UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | ✅ Complete |
-| Docker / Kubernetes | Planned |
+| Docker plugin (containers, images, logs, start/stop/restart) | ✅ Complete |
+| Kubernetes plugin (nodes, workloads, networking, storage, logs, shell, YAML editor) | ✅ Complete |
 | Plex / Jellyfin / TrueNAS / Synology | Planned |
 | Notifications, config backup/restore | Planned |
 
@@ -101,8 +102,8 @@ On first launch UHLD auto-creates an **`admin` / `admin`** account and immediate
 ### What UHLD Can Access
 
 - **Proxmox:** VM/LXC lifecycle, host information, storage, resource usage
-- **Docker:** Container management, logs, configuration
-- **Kubernetes:** Pod/deployment management, logs, resource access
+- **Docker:** Container lifecycle (start/stop/restart), log access, image inventory
+- **Kubernetes:** Pod/deployment management, container logs, **interactive shell exec into any running pod**, direct YAML patch/apply to cluster resources — treat this as equivalent to `kubectl` access
 - **UniFi:** Network devices, clients, WiFi settings, firewall rules
 - **Tailscale:** Node management, user access, DNS, ACLs
 - **AdGuard/Pi-hole:** DNS blocking rules, query logs
@@ -113,13 +114,15 @@ An attacker who gains access to UHLD can:
 - Start/stop/reboot VMs and containers
 - Modify network configurations
 - Access logs and diagnostics containing PII or secrets
-- Potentially pivot to other infrastructure components
+- **Execute an interactive shell inside any running Kubernetes pod** — including pods with access to databases, secrets, internal APIs, or service account tokens
+- **Apply arbitrary YAML to your Kubernetes cluster** — equivalent to having `kubectl apply` access
+- Potentially pivot to other infrastructure components via pod environments, mounted secrets, or service accounts
 
 ### Security Best Practices
 
 **Always:**
 - ✅ Use **strong, unique passwords** for the UHLD admin account — this is your primary defense
-- ✅ Enable **2FA (two-factor authentication)** once available (planned feature)
+- ⏳ Enable **2FA (two-factor authentication)** once available — planned, not yet implemented
 - ✅ Keep UHLD on a **private network or VPN** — never expose the web interface directly to the public internet
 - ✅ Access only via **HTTPS with valid certificates** in production
 - ✅ Use **separate credentials** for UHLD that differ from your personal/primary passwords

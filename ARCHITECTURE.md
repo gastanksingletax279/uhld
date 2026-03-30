@@ -305,12 +305,41 @@ POST /api/plugins/adguard/protection/disable
 GET  /api/plugins/docker/containers
 POST /api/plugins/docker/containers/{id}/start
 POST /api/plugins/docker/containers/{id}/stop
+POST /api/plugins/docker/containers/{id}/restart
+GET  /api/plugins/docker/containers/{id}/logs?tail=200
 GET  /api/plugins/docker/images
 
-# Kubernetes
-GET  /api/plugins/kubernetes/namespaces
-GET  /api/plugins/kubernetes/pods
+# Kubernetes — Cluster
 GET  /api/plugins/kubernetes/nodes
+GET  /api/plugins/kubernetes/namespaces
+# Kubernetes — Workloads
+GET  /api/plugins/kubernetes/pods?namespace=
+GET  /api/plugins/kubernetes/deployments?namespace=
+GET  /api/plugins/kubernetes/statefulsets?namespace=
+GET  /api/plugins/kubernetes/daemonsets?namespace=
+GET  /api/plugins/kubernetes/jobs?namespace=
+GET  /api/plugins/kubernetes/cronjobs?namespace=
+# Kubernetes — Networking
+GET  /api/plugins/kubernetes/services?namespace=
+GET  /api/plugins/kubernetes/ingresses?namespace=
+GET  /api/plugins/kubernetes/ingressclasses
+GET  /api/plugins/kubernetes/httproutes?namespace=
+# Kubernetes — Storage
+GET  /api/plugins/kubernetes/persistentvolumes
+GET  /api/plugins/kubernetes/persistentvolumeclaims?namespace=
+GET  /api/plugins/kubernetes/configmaps?namespace=
+GET  /api/plugins/kubernetes/secrets?namespace=
+# Kubernetes — Longhorn
+GET  /api/plugins/kubernetes/longhorn/volumes
+GET  /api/plugins/kubernetes/longhorn/nodes
+# Kubernetes — Actions
+GET  /api/plugins/kubernetes/pods/{namespace}/{pod}/containers
+GET  /api/plugins/kubernetes/pods/{namespace}/{pod}/logs?container=&tail=200
+WS   /api/plugins/kubernetes/pods/{namespace}/{pod}/exec?container=&command=
+DELETE /api/plugins/kubernetes/pods/{namespace}/{pod}         # restart (delete, k8s recreates)
+PATCH  /api/plugins/kubernetes/deployments/{namespace}/{name}/scale
+GET  /api/plugins/kubernetes/yaml/{kind}/{name}?namespace=
+POST /api/plugins/kubernetes/yaml/apply
 
 # Plex / Jellyfin
 GET  /api/plugins/plex/sessions           # active streams
@@ -398,14 +427,14 @@ This means no per-plugin frontend config code is ever needed.
 | **Pi-hole** | Network/DNS | ✅ Complete | Pi-hole API (httpx) |
 | **Tailscale** | Network | ✅ Complete | Tailscale API v2 (httpx) + local Unix socket |
 | **UniFi** | Network | ✅ Complete | UniFi Integration v1 API (httpx) |
-| **Docker** | Containers | Planned | `docker` (Docker SDK) |
+| **Docker** | Containers | ✅ Complete | httpx Unix socket / TCP transport |
+| **Kubernetes** | Containers | ✅ Complete | `kubernetes` (official Python client) |
 | **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
 
 ### Phase 2
 
 | Plugin | Category | Library/API |
 |---|---|---|
-| **Kubernetes** | Containers | `kubernetes` (official client) |
 | **Plex** | Media | `plexapi` |
 | **Jellyfin** | Media | Jellyfin HTTP API (httpx) |
 | **TrueNAS** | Storage | TrueNAS REST API (httpx) |
@@ -612,9 +641,15 @@ When implementing UHLD, follow these rules:
   - WiFi tab: security type badges, client isolation
   - Firewall tab: policies (with zone resolution), groups, zones (system/custom)
 
-### Sprint 4: Container Plugins
-- [ ] Docker plugin (container list, start/stop, image list)
-- [ ] Kubernetes plugin (pod list, node health, namespace overview)
+### Sprint 4: Container Plugins ✅ Complete
+- [x] Docker plugin — httpx Unix socket/TCP transport; Containers tab (state badge, start/stop/restart, logs modal); Images tab (repo:tag, size, age)
+- [x] Kubernetes plugin — full cluster visibility with 4 groups / 18 resource tabs:
+  - Cluster: Nodes, Namespaces
+  - Workloads: Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs
+  - Networking: Services, Ingresses, IngressClasses, HTTPRoutes (Gateway API)
+  - Storage: PersistentVolumes, PVCs, ConfigMaps, Secrets, Longhorn (volumes + nodes)
+  - Actions: pod logs modal (multi-container), interactive shell via xterm.js WebSocket (auto-detects bash/sh/ash), pod restart, deployment scale ±1, YAML view/edit/apply
+  - Kubeconfig: paste content (encrypted at rest) or path; in-cluster flag
 
 ### Sprint 5: Media & Storage
 - [ ] Plex plugin (active sessions, library stats)

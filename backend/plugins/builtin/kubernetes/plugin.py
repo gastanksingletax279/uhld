@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 
 from fastapi import APIRouter
 
@@ -523,6 +524,304 @@ class KubernetesPlugin(PluginBase):
                 "created": _ts(sec.metadata.creation_timestamp),
             })
         return result
+
+    # ── Networking extras ─────────────────────────────────────────────────────
+
+    def _custom_objects(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.CustomObjectsApi(self._get_api_client())
+
+    async def _fetch_httproutes(self, namespace: str = "") -> list[dict]:
+        co = self._custom_objects()
+        try:
+            if namespace:
+                raw = await self._run(
+                    co.list_namespaced_custom_object,
+                    "gateway.networking.k8s.io", "v1", namespace, "httproutes",
+                )
+            else:
+                raw = await self._run(
+                    co.list_cluster_custom_object,
+                    "gateway.networking.k8s.io", "v1", "httproutes",
+                )
+        except Exception:
+            return []
+        result = []
+        for item in raw.get("items", []):
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            parents = [
+                f"{p.get('name', '')}{'/' + p.get('sectionName', '') if p.get('sectionName') else ''}"
+                for p in spec.get("parentRefs", [])
+            ]
+            hostnames = spec.get("hostnames", [])
+            rules = len(spec.get("rules", []))
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "hostnames": hostnames,
+                "parents": parents,
+                "rules": rules,
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_ingressclasses(self) -> list[dict]:
+        net = self._networking_v1()
+        try:
+            items = (await self._run(net.list_ingress_class)).items
+        except Exception:
+            return []
+        result = []
+        for ic in items:
+            spec = ic.spec
+            params = None
+            if spec and spec.parameters:
+                params = f"{spec.parameters.api_group or ''}/{spec.parameters.kind}/{spec.parameters.name}"
+            result.append({
+                "name": ic.metadata.name,
+                "controller": (spec.controller or "") if spec else "",
+                "parameters": params or "",
+                "is_default": (ic.metadata.annotations or {}).get(
+                    "ingressclass.kubernetes.io/is-default-class", "false"
+                ) == "true",
+                "created": _ts(ic.metadata.creation_timestamp),
+            })
+        return result
+
+    # ── Longhorn storage ──────────────────────────────────────────────────────
+
+    async def _fetch_longhorn_volumes(self) -> list[dict]:
+        co = self._custom_objects()
+        try:
+            raw = await self._run(
+                co.list_cluster_custom_object,
+                "longhorn.io", "v1beta2", "volumes",
+            )
+        except Exception:
+            return []
+        result = []
+        for item in raw.get("items", []):
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            st = item.get("status", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", "longhorn-system"),
+                "state": st.get("state", ""),
+                "robustness": st.get("robustness", ""),
+                "size": spec.get("size", ""),
+                "replicas": spec.get("numberOfReplicas", 0),
+                "frontend": spec.get("frontend", ""),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_longhorn_nodes(self) -> list[dict]:
+        co = self._custom_objects()
+        try:
+            raw = await self._run(
+                co.list_cluster_custom_object,
+                "longhorn.io", "v1beta2", "nodes",
+            )
+        except Exception:
+            return []
+        result = []
+        for item in raw.get("items", []):
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            st = item.get("status", {})
+            disks = st.get("diskStatus", {})
+            disk_count = len(disks)
+            schedulable = spec.get("allowScheduling", True)
+            conditions = {c.get("type"): c.get("status") for c in st.get("conditions", [])}
+            ready = conditions.get("Ready", "False") == "True"
+            result.append({
+                "name": meta.get("name", ""),
+                "ready": ready,
+                "schedulable": schedulable,
+                "disk_count": disk_count,
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    # ── YAML get / apply ──────────────────────────────────────────────────────
+
+    async def _get_resource_yaml(self, kind: str, namespace: str, name: str) -> str:
+        import yaml  # type: ignore[import]
+        v1 = self._core_v1()
+        apps = self._apps_v1()
+        batch = self._batch_v1()
+        net = self._networking_v1()
+
+        _kind = kind.lower()
+        fetchers: dict[str, any] = {
+            "pod":         lambda: v1.read_namespaced_pod(name, namespace),
+            "deployment":  lambda: apps.read_namespaced_deployment(name, namespace),
+            "statefulset": lambda: apps.read_namespaced_stateful_set(name, namespace),
+            "daemonset":   lambda: apps.read_namespaced_daemon_set(name, namespace),
+            "service":     lambda: v1.read_namespaced_service(name, namespace),
+            "configmap":   lambda: v1.read_namespaced_config_map(name, namespace),
+            "secret":      lambda: v1.read_namespaced_secret(name, namespace),
+            "ingress":     lambda: net.read_namespaced_ingress(name, namespace),
+            "persistentvolumeclaim": lambda: v1.read_namespaced_persistent_volume_claim(name, namespace),
+            "persistentvolume": lambda: v1.read_persistent_volume(name),
+            "namespace":   lambda: v1.read_namespace(name),
+        }
+        if _kind not in fetchers:
+            raise ValueError(f"Unsupported kind: {kind}")
+        obj = await self._run(fetchers[_kind])
+        from kubernetes import client as k8s_client  # type: ignore[import]
+        api_client = self._get_api_client()
+        raw = api_client.sanitize_for_serialization(obj)
+        # Strip managed fields for cleaner editing
+        if "metadata" in raw and "managedFields" in raw["metadata"]:
+            del raw["metadata"]["managedFields"]
+        return yaml.dump(raw, default_flow_style=False, allow_unicode=True)
+
+    async def _apply_resource_yaml(self, yaml_str: str) -> dict:
+        import yaml  # type: ignore[import]
+        body = yaml.safe_load(yaml_str)
+        if not isinstance(body, dict):
+            raise ValueError("YAML must be a mapping")
+        kind = body.get("kind", "")
+        namespace = (body.get("metadata") or {}).get("namespace", "")
+        name = (body.get("metadata") or {}).get("name", "")
+        if not kind or not name:
+            raise ValueError("YAML must have kind and metadata.name")
+
+        from kubernetes import client as k8s_client  # type: ignore[import]
+        _kind = kind.lower()
+        v1 = self._core_v1()
+        apps = self._apps_v1()
+        batch = self._batch_v1()
+        net = self._networking_v1()
+
+        patchers: dict[str, any] = {
+            "pod":         lambda: v1.patch_namespaced_pod(name, namespace, body),
+            "deployment":  lambda: apps.patch_namespaced_deployment(name, namespace, body),
+            "statefulset": lambda: apps.patch_namespaced_stateful_set(name, namespace, body),
+            "daemonset":   lambda: apps.patch_namespaced_daemon_set(name, namespace, body),
+            "service":     lambda: v1.patch_namespaced_service(name, namespace, body),
+            "configmap":   lambda: v1.patch_namespaced_config_map(name, namespace, body),
+            "secret":      lambda: v1.patch_namespaced_secret(name, namespace, body),
+            "ingress":     lambda: net.patch_namespaced_ingress(name, namespace, body),
+            "persistentvolumeclaim": lambda: v1.patch_namespaced_persistent_volume_claim(name, namespace, body),
+            "persistentvolume": lambda: v1.patch_persistent_volume(name, body),
+            "namespace":   lambda: v1.patch_namespace(name, body),
+        }
+        if _kind not in patchers:
+            raise ValueError(f"Unsupported kind: {kind}")
+        await self._run(patchers[_kind])
+        return {"ok": True, "kind": kind, "name": name}
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+
+    async def _fetch_pod_logs(self, namespace: str, pod: str, container: str = "", tail: int = 200) -> str:
+        v1 = self._core_v1()
+        kwargs: dict = {"name": pod, "namespace": namespace, "tail_lines": tail, "timestamps": False}
+        if container:
+            kwargs["container"] = container
+        try:
+            return await self._run(v1.read_namespaced_pod_log, **kwargs) or ""
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    async def _fetch_pod_containers(self, namespace: str, pod: str) -> list[str]:
+        v1 = self._core_v1()
+        p = await self._run(v1.read_namespaced_pod, pod, namespace)
+        return [c.name for c in (p.spec.containers or [])]
+
+    async def _restart_pod(self, namespace: str, pod: str) -> None:
+        from kubernetes import client  # type: ignore[import]
+        v1 = self._core_v1()
+        await self._run(v1.delete_namespaced_pod, pod, namespace, body=client.V1DeleteOptions(grace_period_seconds=0))
+
+    async def _exec_pod_shell(self, websocket, namespace: str, pod: str, container: str = "", command: str = "/bin/sh") -> None:
+        """Bridge a FastAPI WebSocket to a Kubernetes pod exec stream."""
+        from kubernetes.stream import stream  # type: ignore[import]
+        from kubernetes.stream.ws_client import STDOUT_CHANNEL, STDERR_CHANNEL  # type: ignore[import]
+        loop = asyncio.get_event_loop()
+        cmd = [command]
+        v1 = self._core_v1()
+        resp = await loop.run_in_executor(None, lambda: stream(
+            v1.connect_get_namespaced_pod_exec,
+            pod, namespace,
+            command=cmd,
+            container=container or None,
+            stderr=True, stdin=True, stdout=True, tty=True,
+            _preload_content=False,
+        ))
+
+        output_q: asyncio.Queue[str | None] = asyncio.Queue()
+
+        def _read_loop() -> None:
+            # Every peek/read_channel method on WSClient calls update() internally,
+            # which triggers a second WebSocket recv. On clusters that negotiate
+            # per-message deflate (RSV1 set), that second recv raises
+            # WebSocketProtocolException("rsv is not implemented, yet").
+            #
+            # Fix: call update() exactly ONCE per iteration, then drain _channels
+            # directly — bypassing every kubernetes client method that would call
+            # update() again.
+            channels: dict = getattr(resp, "_channels", {})
+            try:
+                while resp.is_open():
+                    try:
+                        resp.update(timeout=1)
+                    except Exception as exc:
+                        logger.debug("k8s exec update error: %s", exc)
+                        break
+                    # Pop data directly from the internal buffer; never call
+                    # peek_channel / read_channel / peek_stdout / read_stdout etc.
+                    for ch in (STDOUT_CHANNEL, STDERR_CHANNEL):
+                        data = channels.pop(ch, None)
+                        if data:
+                            loop.call_soon_threadsafe(output_q.put_nowait, data)
+            except Exception as exc:
+                logger.debug("k8s exec read_loop ended: %s", exc)
+            finally:
+                loop.call_soon_threadsafe(output_q.put_nowait, None)
+
+        t = threading.Thread(target=_read_loop, daemon=True)
+        t.start()
+
+        async def _send_loop() -> None:
+            while True:
+                data = await output_q.get()
+                if data is None:
+                    break
+                try:
+                    await websocket.send_text(data)
+                except Exception:
+                    break
+            # Pod session ended — close the WebSocket so _recv_loop's iter_text
+            # unblocks and asyncio.gather can complete, sending a close frame
+            # to the frontend and triggering onclose there.
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+        async def _recv_loop() -> None:
+            try:
+                from starlette.websockets import WebSocketDisconnect
+                async for msg in websocket.iter_text():
+                    await loop.run_in_executor(None, resp.write_stdin, msg)
+            except Exception:
+                pass
+            finally:
+                resp.close()
+
+        await asyncio.gather(_send_loop(), _recv_loop())
+        t.join(timeout=2)
+
+    async def _scale_deployment(self, namespace: str, name: str, replicas: int) -> dict:
+        apps = self._apps_v1()
+        patch = {"spec": {"replicas": replicas}}
+        result = await self._run(apps.patch_namespaced_deployment_scale, name, namespace, patch)
+        spec = result.spec
+        return {"replicas": (spec.replicas or 0) if spec else replicas}
 
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.kubernetes.api import make_router

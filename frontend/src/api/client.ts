@@ -221,6 +221,36 @@ export const api = {
       pvcs:              (namespace = '') => request<{ pvcs: K8sPVC[] }>(`${p}/persistentvolumeclaims${ns(namespace)}`),
       configmaps:        (namespace = '') => request<{ configmaps: K8sConfigMap[] }>(`${p}/configmaps${ns(namespace)}`),
       secrets:           (namespace = '') => request<{ secrets: K8sSecret[] }>(`${p}/secrets${ns(namespace)}`),
+      // Actions
+      podContainers:     (namespace: string, pod: string) =>
+        request<{ containers: string[] }>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/containers`),
+      podLogs:           (namespace: string, pod: string, container = '', tail = 200) =>
+        request<{ logs: string }>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?container=${encodeURIComponent(container)}&tail=${tail}`),
+      restartPod:        (namespace: string, pod: string) =>
+        request<{ ok: boolean }>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}`, { method: 'DELETE' }),
+      scaleDeployment:   (namespace: string, name: string, replicas: number) =>
+        request<{ replicas: number }>(`${p}/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replicas }),
+        }),
+      execWsUrl:         (namespace: string, pod: string, container = '', command = '/bin/sh') => {
+        const base = p.replace(/^\/api/, '')
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        const params = new URLSearchParams({ container, command })
+        return `${wsProto}://${window.location.host}/api${base}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/exec?${params}`
+      },
+      // Networking extras
+      httproutes:        (namespace = '') => request<{ httproutes: K8sHTTPRoute[] }>(`${p}/httproutes${ns(namespace)}`),
+      ingressclasses:    () => request<{ ingressclasses: K8sIngressClass[] }>(`${p}/ingressclasses`),
+      // Longhorn
+      longhornVolumes:   () => request<{ volumes: K8sLonghornVolume[] }>(`${p}/longhorn/volumes`),
+      longhornNodes:     () => request<{ nodes: K8sLonghornNode[] }>(`${p}/longhorn/nodes`),
+      // YAML
+      getYaml:           (kind: string, name: string, namespace = '') =>
+        request<{ yaml: string }>(`${p}/yaml/${encodeURIComponent(kind)}/${encodeURIComponent(name)}${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`),
+      applyYaml:         (yaml: string) =>
+        request<{ ok: boolean; kind: string; name: string }>(`${p}/yaml/apply`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ yaml }),
+        }),
     }
   },
 
@@ -635,6 +665,42 @@ export interface K8sSecret {
   namespace: string
   type: string
   data_count: number
+  created: string
+}
+
+export interface K8sHTTPRoute {
+  name: string
+  namespace: string
+  hostnames: string[]
+  parents: string[]
+  rules: number
+  created: string
+}
+
+export interface K8sIngressClass {
+  name: string
+  controller: string
+  parameters: string
+  is_default: boolean
+  created: string
+}
+
+export interface K8sLonghornVolume {
+  name: string
+  namespace: string
+  state: string
+  robustness: string
+  size: string
+  replicas: number
+  frontend: string
+  created: string
+}
+
+export interface K8sLonghornNode {
+  name: string
+  ready: boolean
+  schedulable: boolean
+  disk_count: number
   created: string
 }
 

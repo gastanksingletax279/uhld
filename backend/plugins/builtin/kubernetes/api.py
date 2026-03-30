@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from backend.plugins.builtin.kubernetes.plugin import KubernetesPlugin
+
+
+class ScaleRequest(BaseModel):
+    replicas: int
+
+
+class YamlApplyRequest(BaseModel):
+    yaml: str
 
 
 def make_router(plugin: KubernetesPlugin) -> APIRouter:
@@ -114,6 +123,101 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
     async def list_secrets(namespace: str = ""):
         try:
             return {"secrets": await plugin._fetch_secrets(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+
+    @router.get("/pods/{namespace}/{pod}/containers")
+    async def pod_containers(namespace: str, pod: str):
+        try:
+            return {"containers": await plugin._fetch_pod_containers(namespace, pod)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/pods/{namespace}/{pod}/logs")
+    async def pod_logs(namespace: str, pod: str, container: str = "", tail: int = 200):
+        try:
+            text = await plugin._fetch_pod_logs(namespace, pod, container, tail)
+            return {"logs": text}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.delete("/pods/{namespace}/{pod}")
+    async def restart_pod(namespace: str, pod: str):
+        try:
+            await plugin._restart_pod(namespace, pod)
+            return {"ok": True}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.patch("/deployments/{namespace}/{name}/scale")
+    async def scale_deployment(namespace: str, name: str, body: ScaleRequest):
+        try:
+            return await plugin._scale_deployment(namespace, name, body.replicas)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.websocket("/pods/{namespace}/{pod}/exec")
+    async def pod_exec(websocket: WebSocket, namespace: str, pod: str, container: str = "", command: str = "/bin/sh"):
+        await websocket.accept()
+        try:
+            await plugin._exec_pod_shell(websocket, namespace, pod, container, command)
+        except Exception as exc:
+            try:
+                await websocket.close(code=1011, reason=str(exc))
+            except Exception:
+                pass
+
+    # ── Networking extras ─────────────────────────────────────────────────────
+
+    @router.get("/httproutes")
+    async def list_httproutes(namespace: str = ""):
+        try:
+            return {"httproutes": await plugin._fetch_httproutes(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/ingressclasses")
+    async def list_ingressclasses():
+        try:
+            return {"ingressclasses": await plugin._fetch_ingressclasses()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Longhorn ──────────────────────────────────────────────────────────────
+
+    @router.get("/longhorn/volumes")
+    async def list_longhorn_volumes():
+        try:
+            return {"volumes": await plugin._fetch_longhorn_volumes()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/longhorn/nodes")
+    async def list_longhorn_nodes():
+        try:
+            return {"nodes": await plugin._fetch_longhorn_nodes()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── YAML ──────────────────────────────────────────────────────────────────
+
+    @router.get("/yaml/{kind}/{name}")
+    async def get_resource_yaml(kind: str, name: str, namespace: str = ""):
+        try:
+            return {"yaml": await plugin._get_resource_yaml(kind, namespace, name)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/yaml/apply")
+    async def apply_resource_yaml(body: YamlApplyRequest):
+        try:
+            return await plugin._apply_resource_yaml(body.yaml)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
