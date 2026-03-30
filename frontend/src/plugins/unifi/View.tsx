@@ -8,6 +8,7 @@ import {
   RefreshCw, Wifi, Network, Loader2, AlertCircle,
   RotateCcw, ChevronUp, ChevronDown, ArrowUpCircle,
 } from 'lucide-react'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'clients' | 'devices' | 'ports' | 'networks' | 'wlans' | 'firewall'
 
@@ -68,7 +69,9 @@ function SectionLoader() {
 
 export function UniFiView({ instanceId = 'default' }: { instanceId?: string }) {
   const unifi = api.unifi(instanceId)
-  const [tab, setTab] = useState<Tab>('clients')
+  const _key = `unifi:${instanceId}`
+  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'clients') as Tab)
+  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
 
   const [clients, setClients] = useState<UniFiClient[]>([])
   const [clientsLoading, setClientsLoading] = useState(true)

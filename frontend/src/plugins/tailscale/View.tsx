@@ -10,6 +10,7 @@ import {
   MonitorSmartphone, Wrench, Tag, Trash2, Timer, ShieldCheck,
   Settings, CheckCircle2, MoreVertical, Pencil, X,
 } from 'lucide-react'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'devices' | 'users' | 'dns' | 'acl' | 'keys' | 'settings'
 type SortKey = 'hostname' | 'os' | 'user' | 'lastSeen' | 'online' | 'clientVersion'
@@ -17,7 +18,9 @@ type SortDir = 'asc' | 'desc'
 
 export function TailscaleView({ instanceId = 'default' }: { instanceId?: string }) {
   const tailscale = api.tailscale(instanceId)
-  const [tab, setTab] = useState<Tab>('devices')
+  const _key = `tailscale:${instanceId}`
+  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'devices') as Tab)
+  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
 
   // Devices
   const [devices, setDevices] = useState<TailscaleDevice[]>([])

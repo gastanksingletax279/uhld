@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   api,
   K8sNode, K8sPod, K8sNamespace,
@@ -8,6 +8,7 @@ import {
   K8sLonghornVolume, K8sLonghornNode,
   K8sCertificate, K8sEvent, K8sOverview,
 } from '../../api/client'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 import {
   RefreshCw, Loader2, AlertCircle, Server, Filter,
   RotateCcw, ScrollText, X, ChevronUp, ChevronDown, ChevronsUpDown,
@@ -94,10 +95,14 @@ type YamlModal = {
 // ── Component ──────────────────────────────────────────────────────────────
 export function KubernetesView({ instanceId = 'default' }: { instanceId?: string }) {
   const k8s = api.kubernetes(instanceId)
+  const _key = `kubernetes:${instanceId}`
 
-  const [group, setGroup]       = useState<Group>('cluster')
-  const [tab, setTab]           = useState<Tab>('overview')
+  const [group, setGroupRaw]    = useState<Group>(getViewState(`${_key}:group`, 'cluster') as Group)
+  const [tab, setTabRaw]        = useState<Tab>(getViewState(`${_key}:tab`, 'overview') as Tab)
   const [nsFilter, setNsFilter] = useState('')
+
+  function setGroup(g: Group) { setViewState(`${_key}:group`, g); setGroupRaw(g) }
+  function setTab(t: Tab)     { setViewState(`${_key}:tab`, t);   setTabRaw(t) }
 
   const [nodes,         setNodes]         = useState<TabState<K8sNode>>(emptyTab())
   const [namespaces,    setNamespaces]    = useState<TabState<K8sNamespace>>(emptyTab())

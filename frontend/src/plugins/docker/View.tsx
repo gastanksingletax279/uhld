@@ -4,6 +4,7 @@ import {
   RefreshCw, Loader2, AlertCircle, Play, Square, RotateCcw,
   ScrollText, X, Container, HardDrive, Terminal,
 } from 'lucide-react'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'containers' | 'images'
 
@@ -11,7 +12,9 @@ const SHELL_CANDIDATES = ['/bin/sh', '/bin/bash', '/bin/ash', '/usr/bin/sh', '/u
 
 export function DockerView({ instanceId = 'default' }: { instanceId?: string }) {
   const docker = api.docker(instanceId)
-  const [tab, setTab] = useState<Tab>('containers')
+  const _key = `docker:${instanceId}`
+  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'containers') as Tab)
+  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
 
   const [containers, setContainers] = useState<DockerContainer[]>([])
   const [containersLoading, setContainersLoading] = useState(true)

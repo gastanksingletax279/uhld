@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api, AdGuardStats, AdGuardStatus, AdGuardQueryLogEntry } from '../../api/client'
 import { RefreshCw, Shield, ShieldOff, Loader2, AlertCircle } from 'lucide-react'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'overview' | 'querylog'
 
 export function AdGuardView({ instanceId = 'default' }: { instanceId?: string }) {
   const adguard = api.adguard(instanceId)
-  const [tab, setTab] = useState<Tab>('overview')
+  const _key = `adguard:${instanceId}`
+  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'overview') as Tab)
+  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
   const [stats, setStats] = useState<AdGuardStats | null>(null)
   const [status, setStatus] = useState<AdGuardStatus | null>(null)
   const [querylog, setQuerylog] = useState<AdGuardQueryLogEntry[]>([])

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, ProxmoxNode, ProxmoxVM } from '../../api/client'
 import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react'
+import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'nodes' | 'vms' | 'storage'
 type SortDir = 'asc' | 'desc'
@@ -8,7 +9,9 @@ type VmSortKey = 'name' | 'vmid' | 'node' | 'type' | 'status' | 'cpu' | 'mem' | 
 
 export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string }) {
   const proxmox = api.proxmox(instanceId)
-  const [tab, setTab] = useState<Tab>('nodes')
+  const _key = `proxmox:${instanceId}`
+  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'nodes') as Tab)
+  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
   const [nodes, setNodes] = useState<ProxmoxNode[]>([])
   const [vms, setVms] = useState<ProxmoxVM[]>([])
   const [storage, setStorage] = useState<ProxmoxStorage[]>([])
