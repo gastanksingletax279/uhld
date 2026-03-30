@@ -13,6 +13,7 @@ type ConfigModalState = {
   plugin: PluginDetail
   mode: 'enable' | 'config'
   instanceId: string
+  instanceLabel: string
 }
 
 type AddInstanceModalState = {
@@ -90,7 +91,8 @@ export function PluginManager() {
   async function openConfig(pluginId: string, instanceId: string, mode: 'enable' | 'config') {
     setModalError('')
     const detail = await getPluginDetail(pluginId, instanceId)
-    setConfigModal({ plugin: detail, mode, instanceId })
+    const existingLabel = plugins.find((p) => p.plugin_id === pluginId && p.instance_id === instanceId)?.instance_label ?? ''
+    setConfigModal({ plugin: detail, mode, instanceId, instanceLabel: existingLabel })
   }
 
   async function handleDisable(pluginId: string, instanceId: string) {
@@ -133,11 +135,12 @@ export function PluginManager() {
     if (!configModal) return
     setModalLoading(true)
     setModalError('')
+    const label = configModal.instanceLabel.trim() || undefined
     try {
       if (configModal.mode === 'enable') {
-        await enablePlugin(configModal.plugin.plugin_id, values, configModal.instanceId)
+        await enablePlugin(configModal.plugin.plugin_id, values, configModal.instanceId, label)
       } else {
-        await updateConfig(configModal.plugin.plugin_id, values, configModal.instanceId)
+        await updateConfig(configModal.plugin.plugin_id, values, configModal.instanceId, label)
       }
       setConfigModal(null)
     } catch (err: unknown) {
@@ -329,6 +332,17 @@ export function PluginManager() {
                   {modalError}
                 </div>
               )}
+              <div className="mb-4">
+                <label className="block text-xs text-muted mb-1">Display Label</label>
+                <input
+                  type="text"
+                  value={configModal.instanceLabel}
+                  onChange={(e) => setConfigModal((prev) => prev ? { ...prev, instanceLabel: e.target.value } : null)}
+                  placeholder={configModal.instanceId === 'default' ? 'e.g. Home Lab, Production' : configModal.instanceId}
+                  className="input w-full text-sm"
+                />
+                <p className="text-[10px] text-muted mt-1">Optional name shown in the UI instead of "{configModal.instanceId}".</p>
+              </div>
               {Object.keys(configModal.plugin.config_schema?.properties ?? {}).length === 0 ? (
                 <div className="space-y-4">
                   <p className="text-sm text-muted">This plugin requires no configuration.</p>

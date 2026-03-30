@@ -17,3 +17,4 @@ python-multipart==0.0.22
 # Plugin dependencies
 proxmoxer==2.0.1
 requests==2.33.0
+kubernetes>=29.0.0

@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # UHLD — Claude Code Instructions
 
 ## Project Summary
@@ -82,6 +86,8 @@ class FooPlugin(PluginBase):
     def get_router(self) -> APIRouter: ...
 ```
 
+`__init__(config)` receives the decrypted config dict for lightweight init. `on_enable(config)` is the async hook for connection setup and validation — put anything that can fail (HTTP calls, socket connections) here, not in `__init__`. `scheduled_poll()` is called on the APScheduler interval to refresh any cached state on the instance.
+
 ### Sensitive Config Fields
 
 Fields with `"sensitive": true` in `config_schema` are:
@@ -121,7 +127,12 @@ cd frontend && npm install && npm run dev
 python -m backend.cli create-user admin yourpassword
 
 # Docker build
-./build-run.sh
+./build-run.sh           # copies .env.example → .env on first run
+./build-run.sh --no-cache
+
+# Linting / type checks
+black backend/           # format Python
+cd frontend && npx tsc --noEmit  # TypeScript type check (same as build step)
 ```
 
 ## Environment Variables
@@ -141,6 +152,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ```
 
 ## Plugin Config Management
+
+**Router mounting is one-way:** FastAPI does not support unmounting routers at runtime. Plugin routes mounted at startup (or when first enabled) persist until the process restarts, even after a plugin is disabled or cleared. This is intentional — disabling a plugin stops scheduling and marks it inactive in DB, but its API prefix remains reachable (returns errors if called without a live instance).
 
 The "Clear Settings" button (in the Configure modal, config mode only) calls `POST /api/plugins/{id}/clear`, which:
 1. Disables the plugin (stops scheduling, unmounts nothing — routes stay mounted until restart)
@@ -163,10 +176,13 @@ Each plugin can have multiple independent instances (e.g. two UniFi controllers,
 - Settings UI: lists all instances per plugin with Configure/Disable/Delete per instance + "Add instance" button
 - `migrate_db()` in `database.py` safely adds `instance_id`/`instance_label` to existing databases
 
+**Reserved instance IDs** (cannot be used as `instance_id`): `enable`, `disable`, `config`, `health`, `clear`, `instances` — these conflict with management endpoint path segments.
+
 **Design rules when adding new plugins:**
 - All state must live on the plugin instance (no module-level globals)
 - Config is fully self-contained in the instance — no shared singleton state
 - Frontend `View.tsx` must accept `{ instanceId?: string }` prop and call `api.{plugin}(instanceId)` factory
+- Add a plugin factory function to `frontend/src/api/client.ts` following the `api.proxmox(instanceId)` pattern — returns an object of typed calls with the prefix already resolved
 
 ## Code Style
 

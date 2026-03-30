@@ -226,8 +226,9 @@ async def update_plugin_config(
     config: dict,
     db: AsyncSession,
     app: FastAPI,
+    instance_label: str | None = None,
 ) -> None:
-    """Update plugin config and re-enable with new config."""
+    """Update plugin config (and optionally its display label) and re-enable with new config."""
     result = await db.execute(
         select(PluginConfig).where(
             PluginConfig.plugin_id == plugin_id,
@@ -237,4 +238,5 @@ async def update_plugin_config(
     cfg = result.scalar_one_or_none()
     if cfg is None or not cfg.enabled:
         raise ValueError(f"Plugin {plugin_id}:{instance_id} is not enabled")
-    await enable_plugin(plugin_id, instance_id, cfg.instance_label, config, db, app)
+    label = instance_label if instance_label is not None else cfg.instance_label
+    await enable_plugin(plugin_id, instance_id, label, config, db, app)

@@ -49,6 +49,7 @@ class EnableRequest(BaseModel):
 
 class UpdateConfigRequest(BaseModel):
     config: dict
+    instance_label: str | None = None
 
 
 class CreateInstanceRequest(BaseModel):
@@ -205,7 +206,7 @@ async def update_config(
     if registry.get_all_plugin_classes().get(plugin_id) is None:
         raise HTTPException(status_code=404, detail="Plugin not found")
     try:
-        await registry.update_plugin_config(plugin_id, instance_id, body.config, db, request.app)
+        await registry.update_plugin_config(plugin_id, instance_id, body.config, db, request.app, body.instance_label)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"message": f"Plugin {plugin_id}:{instance_id} config updated"}

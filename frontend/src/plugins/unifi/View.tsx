@@ -551,7 +551,14 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
                         : <span className="text-muted">—</span>}
                     </td>
                   )}
-                  <td className="px-3 py-2 text-right font-mono text-muted">{p.vlan > 0 ? p.vlan : '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted">
+                    {p.tagged_vlans?.length > 0 ? (
+                      <span className="flex flex-col items-end gap-0.5">
+                        <span className="text-xs text-blue-400 font-semibold">Trunk</span>
+                        <span className="text-xs">{p.tagged_vlans.join(', ')}</span>
+                      </span>
+                    ) : p.vlan > 0 ? p.vlan : '—'}
+                  </td>
                   {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.tx_bytes)}</td>}
                   {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.rx_bytes)}</td>}
                 </tr>

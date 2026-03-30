@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 _TAILSCALE_SOCKET = "/var/run/tailscale/tailscaled.sock"
 
 
+class SaveAclRequest(BaseModel):
+    acl: str
+
+
 def make_router(plugin: TailscalePlugin) -> APIRouter:
     router = APIRouter()
 
@@ -61,13 +65,116 @@ def make_router(plugin: TailscalePlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
-    class SaveAclRequest(BaseModel):
-        acl: str
-
     @router.post("/acl")
     async def save_acl(body: SaveAclRequest):
         try:
             return await plugin._save_acl(body.acl)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/acl/validate")
+    async def validate_acl(body: SaveAclRequest):
+        try:
+            return await plugin._validate_acl(body.acl)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Keys ──────────────────────────────────────────────────────────────────
+
+    @router.get("/keys")
+    async def get_keys():
+        try:
+            keys = await plugin._fetch_keys()
+            return {"keys": keys}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Tailnet settings ──────────────────────────────────────────────────────
+
+    @router.get("/settings")
+    async def get_tailnet_settings():
+        try:
+            return await plugin._fetch_tailnet_settings()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Device actions ────────────────────────────────────────────────────────
+
+    class RenameRequest(BaseModel):
+        name: str
+
+    class SetIpRequest(BaseModel):
+        ipv4: str
+
+    class KeyExpiryRequest(BaseModel):
+        disabled: bool
+
+    class RoutesRequest(BaseModel):
+        routes: list[str]
+
+    class TagsRequest(BaseModel):
+        tags: list[str]
+
+    @router.delete("/devices/{device_id}")
+    async def delete_device(device_id: str):
+        try:
+            return await plugin._delete_device(device_id)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/expire-key")
+    async def expire_device_key(device_id: str):
+        try:
+            return await plugin._expire_device_key(device_id)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/authorize")
+    async def authorize_device(device_id: str):
+        try:
+            return await plugin._authorize_device(device_id)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/rename")
+    async def rename_device(device_id: str, body: RenameRequest):
+        try:
+            return await plugin._rename_device(device_id, body.name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/set-ip")
+    async def set_device_ip(device_id: str, body: SetIpRequest):
+        try:
+            return await plugin._set_device_ip(device_id, body.ipv4)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/key-expiry")
+    async def set_key_expiry(device_id: str, body: KeyExpiryRequest):
+        try:
+            return await plugin._set_key_expiry_disabled(device_id, body.disabled)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/devices/{device_id}/routes")
+    async def get_device_routes(device_id: str):
+        try:
+            return await plugin._get_device_routes(device_id)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/routes")
+    async def set_device_routes(device_id: str, body: RoutesRequest):
+        try:
+            return await plugin._set_device_routes(device_id, body.routes)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/devices/{device_id}/tags")
+    async def set_device_tags(device_id: str, body: TagsRequest):
+        try:
+            return await plugin._set_device_tags(device_id, body.tags)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 

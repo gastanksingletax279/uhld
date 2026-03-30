@@ -367,30 +367,77 @@ class UniFiPlugin(PluginBase):
         return await self._fetch_ports_session()
 
     async def _fetch_ports_v1(self) -> list[dict]:
-        """Fetch switch port details via device detail endpoints (integration v1)."""
+        """Fetch switch port details via device detail endpoints (integration v1).
+
+        The v1 API device detail does not expose port names or VLANs, so we
+        supplement with legacy stat/device + networkconf calls (X-API-Key is
+        accepted on all UniFi OS paths) to get port_overrides and network VLANs.
+        """
         devices = await self._fetch_devices()
         site_id = await self._get_site_id()
+        client = self._get_client()
+        site = self._site_ref()
+
+        # Build network_id → vlan_id lookup from legacy networkconf
+        net_vlan: dict[str, int] = {}
+        try:
+            resp = await client.get(
+                f"/proxy/network/api/s/{site}/rest/networkconf",
+                headers=self._int_headers(),
+            )
+            if resp.is_success:
+                for n in resp.json().get("data", []):
+                    nid = n.get("_id", "")
+                    net_vlan[nid] = int(n.get("vlan", 0)) if n.get("vlan_enabled") else 0
+        except Exception as exc:
+            logger.debug("Could not fetch networkconf for VLAN lookup: %s", exc)
+
+        # Build port-override lookup: mac → {port_idx → override dict}
+        port_overrides_by_mac: dict[str, dict[int, dict]] = {}
+        try:
+            resp = await client.get(
+                f"/proxy/network/api/s/{site}/stat/device",
+                headers=self._int_headers(),
+            )
+            if resp.is_success:
+                for dev in resp.json().get("data", []):
+                    mac = (dev.get("mac") or "").lower()
+                    port_overrides_by_mac[mac] = {
+                        int(o.get("port_idx", 0)): o
+                        for o in dev.get("port_overrides", [])
+                    }
+        except Exception as exc:
+            logger.debug("Could not fetch port names from legacy stat/device: %s", exc)
+
         ports = []
         for d in devices:
             if not d.get("has_ports"):
                 continue
+            overrides = port_overrides_by_mac.get((d.get("mac") or "").lower(), {})
             try:
                 resp = await self._integration_get(f"/v1/sites/{site_id}/devices/{d['id']}")
                 detail = resp.json()
                 device_name = d["name"] or d["mac"]
                 ifaces = detail.get("interfaces") or {}
-                # interfaces may be dict (detail) or list (list endpoint)
                 port_list = ifaces.get("ports", []) if isinstance(ifaces, dict) else []
                 for p in port_list:
                     poe = p.get("poe") or {}
-                    # Try several field names the v1 API may use for VLAN
-                    vlan_id = int(p.get("vlanId", p.get("nativeVlanId", p.get("vlan", 0))) or 0)
+                    idx = int(p.get("idx", 0))
+                    override = overrides.get(idx, {})
+                    port_name = override.get("name", "")
+                    # VLAN is stored as native_networkconf_id → look up vlan_id
+                    net_id = override.get("native_networkconf_id", "")
+                    vlan_id = net_vlan.get(net_id, 0) if net_id else 0
+                    tagged_ids = override.get("tagged_networkconf_ids") or []
+                    tagged_vlans = sorted(
+                        v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
+                    )
                     ports.append({
                         "device_id": d["id"],
                         "device_name": device_name,
-                        "idx": int(p.get("idx", 0)),
-                        "name": p.get("name", ""),
-                        "description": p.get("description", p.get("note", "")),
+                        "idx": idx,
+                        "name": port_name,
+                        "description": port_name,
                         "state": p.get("state", "DOWN"),
                         "connector": p.get("connector", ""),
                         "speed_mbps": int(p.get("speedMbps", 0)),
@@ -399,6 +446,7 @@ class UniFiPlugin(PluginBase):
                         "poe_standard": poe.get("standard", ""),
                         "poe_state": poe.get("state", ""),
                         "vlan": vlan_id,
+                        "tagged_vlans": tagged_vlans,
                         "rx_bytes": 0,
                         "tx_bytes": 0,
                         "full_duplex": False,
@@ -408,19 +456,45 @@ class UniFiPlugin(PluginBase):
         return ports
 
     async def _fetch_ports_session(self) -> list[dict]:
-        devices_raw = await self._session_get(f"/api/s/{self._site_ref()}/stat/device")
+        site = self._site_ref()
+        devices_raw = await self._session_get(f"/api/s/{site}/stat/device")
+
+        # Build network_id → vlan_id lookup
+        net_vlan: dict[str, int] = {}
+        try:
+            nets_resp = await self._session_get(f"/api/s/{site}/rest/networkconf")
+            for n in nets_resp.json().get("data", []):
+                nid = n.get("_id", "")
+                net_vlan[nid] = int(n.get("vlan", 0)) if n.get("vlan_enabled") else 0
+        except Exception as exc:
+            logger.debug("Could not fetch networkconf for VLAN lookup: %s", exc)
+
         ports = []
         for device in devices_raw.json().get("data", []):
             if device.get("type") != "usw":
                 continue
             device_name = device.get("name") or device.get("mac", "")
+            # port_overrides holds user-defined labels and native_networkconf_id for VLANs
+            overrides = {
+                int(o.get("port_idx", 0)): o
+                for o in device.get("port_overrides", [])
+            }
             for p in device.get("port_table", []):
+                idx = int(p.get("port_idx", 0))
+                override = overrides.get(idx, {})
+                port_name = override.get("name", "")
+                net_id = override.get("native_networkconf_id", "")
+                vlan_id = net_vlan.get(net_id, 0) if net_id else 0
+                tagged_ids = override.get("tagged_networkconf_ids") or []
+                tagged_vlans = sorted(
+                    v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
+                )
                 ports.append({
                     "device_id": device.get("_id", device.get("mac", "")),
                     "device_name": device_name,
-                    "idx": int(p.get("port_idx", 0)),
-                    "name": p.get("name", ""),
-                    "description": p.get("name", ""),
+                    "idx": idx,
+                    "name": port_name,
+                    "description": port_name,
                     "state": "UP" if p.get("up") else "DOWN",
                     "connector": "RJ45",
                     "speed_mbps": int(p.get("speed", 0)),
@@ -428,7 +502,8 @@ class UniFiPlugin(PluginBase):
                     "poe_enabled": bool(p.get("poe_enable", False)),
                     "poe_standard": "",
                     "poe_state": "UP" if p.get("poe_enable") else "",
-                    "vlan": int(p.get("vlan", 0)),
+                    "vlan": vlan_id,
+                    "tagged_vlans": tagged_vlans,
                     "rx_bytes": int(p.get("rx_bytes", 0)),
                     "tx_bytes": int(p.get("tx_bytes", 0)),
                     "full_duplex": bool(p.get("full_duplex", False)),

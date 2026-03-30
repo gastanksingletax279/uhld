@@ -14,7 +14,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const contentType = res.headers.get('content-type') ?? ''
     if (contentType.includes('application/json')) {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
-      throw new Error(err.detail ?? `Request failed: ${res.status}`)
+      const detail = err.detail
+      const msg = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+          : detail != null ? JSON.stringify(detail) : `Request failed: ${res.status}`
+      throw new Error(msg)
     }
     throw new Error(`Request failed: ${res.status} ${res.statusText}`)
   }
@@ -61,10 +67,10 @@ export const api = {
   disablePlugin: (id: string, instanceId = 'default') =>
     request<{ message: string }>(`/api/plugins/${id}/disable?instance_id=${instanceId}`, { method: 'POST' }),
 
-  updatePluginConfig: (id: string, config: Record<string, unknown>, instanceId = 'default') =>
+  updatePluginConfig: (id: string, config: Record<string, unknown>, instanceId = 'default', instanceLabel?: string) =>
     request<{ message: string }>(`/api/plugins/${id}/config?instance_id=${instanceId}`, {
       method: 'PUT',
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({ config, instance_label: instanceLabel }),
     }),
 
   checkPluginHealth: (id: string, instanceId = 'default') =>
@@ -158,7 +164,63 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ acl }),
       }),
+      validateAcl: (acl: string) => request<{ valid: boolean; message: string; data?: unknown[] }>(`${p}/acl/validate`, {
+        method: 'POST',
+        body: JSON.stringify({ acl }),
+      }),
+      keys:     () => request<{ keys: TailscaleKey[] }>(`${p}/keys`),
+      tailnetSettings: () => request<TailscaleTailnetSettings>(`${p}/settings`),
+      deleteDevice:    (deviceId: string) => request<{ message: string }>(`${p}/devices/${deviceId}`, { method: 'DELETE' }),
+      expireDeviceKey: (deviceId: string) => request<{ message: string }>(`${p}/devices/${deviceId}/expire-key`, { method: 'POST' }),
+      authorizeDevice: (deviceId: string) => request<{ message: string }>(`${p}/devices/${deviceId}/authorize`, { method: 'POST' }),
+      renameDevice:    (deviceId: string, name: string) => request<{ message: string }>(`${p}/devices/${deviceId}/rename`, { method: 'POST', body: JSON.stringify({ name }) }),
+      setDeviceIp:     (deviceId: string, ipv4: string) => request<{ message: string }>(`${p}/devices/${deviceId}/set-ip`, { method: 'POST', body: JSON.stringify({ ipv4 }) }),
+      setKeyExpiry:    (deviceId: string, disabled: boolean) => request<{ message: string }>(`${p}/devices/${deviceId}/key-expiry`, { method: 'POST', body: JSON.stringify({ disabled }) }),
+      getDeviceRoutes: (deviceId: string) => request<TailscaleDeviceRoutes>(`${p}/devices/${deviceId}/routes`),
+      setDeviceRoutes: (deviceId: string, routes: string[]) => request<TailscaleDeviceRoutes>(`${p}/devices/${deviceId}/routes`, { method: 'POST', body: JSON.stringify({ routes }) }),
+      setDeviceTags:   (deviceId: string, tags: string[]) => request<{ message: string }>(`${p}/devices/${deviceId}/tags`, { method: 'POST', body: JSON.stringify({ tags }) }),
       localStatus: () => request<TailscaleLocalStatus>(`${p}/status`),
+    }
+  },
+
+  // Docker — instance-aware factory
+  docker: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/docker' : `/api/plugins/docker/${instanceId}`
+    return {
+      containers: () => request<{ containers: DockerContainer[] }>(`${p}/containers`),
+      images:     () => request<{ images: DockerImage[] }>(`${p}/images`),
+      start:      (id: string) => request<{ message: string }>(`${p}/containers/${id}/start`,   { method: 'POST' }),
+      stop:       (id: string) => request<{ message: string }>(`${p}/containers/${id}/stop`,    { method: 'POST' }),
+      restart:    (id: string) => request<{ message: string }>(`${p}/containers/${id}/restart`, { method: 'POST' }),
+      logs:       (id: string, tail = 100) =>
+        fetch(`${p}/containers/${id}/logs?tail=${tail}`, { credentials: 'include' })
+          .then((r) => r.ok ? r.text() : r.json().then((e) => Promise.reject(new Error(e.detail ?? 'Failed to load logs')))),
+    }
+  },
+
+  // Kubernetes — instance-aware factory
+  kubernetes: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/kubernetes' : `/api/plugins/kubernetes/${instanceId}`
+    const ns = (namespace: string) => namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''
+    return {
+      // Cluster
+      nodes:             ()            => request<{ nodes: K8sNode[] }>(`${p}/nodes`),
+      namespaces:        ()            => request<{ namespaces: K8sNamespace[] }>(`${p}/namespaces`),
+      // Workloads
+      pods:              (namespace = '') => request<{ pods: K8sPod[] }>(`${p}/pods${ns(namespace)}`),
+      deployments:       (namespace = '') => request<{ deployments: K8sDeployment[] }>(`${p}/deployments${ns(namespace)}`),
+      statefulsets:      (namespace = '') => request<{ statefulsets: K8sStatefulSet[] }>(`${p}/statefulsets${ns(namespace)}`),
+      daemonsets:        (namespace = '') => request<{ daemonsets: K8sDaemonSet[] }>(`${p}/daemonsets${ns(namespace)}`),
+      jobs:              (namespace = '') => request<{ jobs: K8sJob[] }>(`${p}/jobs${ns(namespace)}`),
+      cronjobs:          (namespace = '') => request<{ cronjobs: K8sCronJob[] }>(`${p}/cronjobs${ns(namespace)}`),
+      // Networking
+      services:          (namespace = '') => request<{ services: K8sService[] }>(`${p}/services${ns(namespace)}`),
+      ingresses:         (namespace = '') => request<{ ingresses: K8sIngress[] }>(`${p}/ingresses${ns(namespace)}`),
+      // Storage
+      persistentvolumes: ()            => request<{ pvs: K8sPV[] }>(`${p}/persistentvolumes`),
+      pvcs:              (namespace = '') => request<{ pvcs: K8sPVC[] }>(`${p}/persistentvolumeclaims${ns(namespace)}`),
+      configmaps:        (namespace = '') => request<{ configmaps: K8sConfigMap[] }>(`${p}/configmaps${ns(namespace)}`),
+      secrets:           (namespace = '') => request<{ secrets: K8sSecret[] }>(`${p}/secrets${ns(namespace)}`),
     }
   },
 
@@ -348,7 +410,48 @@ export interface TailscaleDNS {
   nameservers: string[]
   searchPaths: string[]
   magicDNS: boolean
-  domains: string[]
+  overrideLocalDNS: boolean
+  splitDns: Record<string, string[]>
+  tailnetDomain?: string | null
+}
+
+export interface TailscaleKey {
+  id: string
+  description?: string
+  keyType: 'auth' | 'api' | 'client' | 'federated'
+  created?: string
+  expires?: string
+  revoked?: string
+  invalid?: boolean
+  capabilities?: {
+    devices?: {
+      create?: {
+        reusable?: boolean
+        ephemeral?: boolean
+        preauthorized?: boolean
+        tags?: string[]
+      }
+    }
+  }
+  scopes?: string[]
+}
+
+export interface TailscaleTailnetSettings {
+  devicesApprovalOn?: boolean | null
+  usersApprovalOn?: boolean | null
+  devicesAutoUpdatesOn?: boolean | null
+  devicesKeyDurationDays?: number | null
+  httpsEnabled?: boolean | null
+  networkFlowLoggingOn?: boolean | null
+  aclsExternallyManagedOn?: boolean | null
+  aclsExternalLink?: string
+  regionalRoutingOn?: boolean | null
+  postureIdentityCollectionOn?: boolean | null
+}
+
+export interface TailscaleDeviceRoutes {
+  advertisedRoutes: string[]
+  enabledRoutes: string[]
 }
 
 export interface TailscaleLocalStatus {
@@ -360,6 +463,179 @@ export interface TailscaleLocalStatus {
   dns_name?: string
   online: boolean
   tailscale_ips: string[]
+}
+
+// --- Docker types ---
+
+export interface DockerPort {
+  ip: string
+  private_port: number
+  public_port?: number | null
+  type: string
+}
+
+export interface DockerContainer {
+  id: string
+  full_id: string
+  names: string[]
+  image: string
+  image_id: string
+  command: string
+  created: number
+  status: string
+  state: string   // "running" | "exited" | "paused" | "restarting" | "dead" | "created"
+  ports: DockerPort[]
+  labels: Record<string, string>
+}
+
+export interface DockerImage {
+  id: string
+  full_id: string
+  repo_tags: string[]
+  size: number
+  created: number
+  labels: Record<string, string>
+}
+
+// --- Kubernetes types ---
+
+export interface K8sCondition {
+  type: string
+  status: string
+  reason: string
+}
+
+export interface K8sNode {
+  name: string
+  status: string   // "Ready" | "NotReady"
+  roles: string[]
+  version: string
+  created: string
+  internal_ip: string
+  os_image: string
+  container_runtime: string
+  conditions: K8sCondition[]
+}
+
+export interface K8sPod {
+  name: string
+  namespace: string
+  ready: string    // "X/Y"
+  status: string   // "Running" | "Pending" | "Succeeded" | "Failed" | "Unknown"
+  restarts: number
+  node: string
+  ip: string
+  created: string
+}
+
+export interface K8sNamespace {
+  name: string
+  status: string
+  created: string
+}
+
+export interface K8sDeployment {
+  name: string
+  namespace: string
+  ready: string
+  up_to_date: number
+  available: number
+  created: string
+}
+
+export interface K8sStatefulSet {
+  name: string
+  namespace: string
+  ready: string
+  current_revision: string
+  created: string
+}
+
+export interface K8sDaemonSet {
+  name: string
+  namespace: string
+  desired: number
+  current: number
+  ready: number
+  up_to_date: number
+  available: number
+  created: string
+}
+
+export interface K8sJob {
+  name: string
+  namespace: string
+  status: string
+  completions: string
+  failed: number
+  duration: string
+  created: string
+}
+
+export interface K8sCronJob {
+  name: string
+  namespace: string
+  schedule: string
+  last_schedule: string
+  active: number
+  suspended: boolean
+  created: string
+}
+
+export interface K8sService {
+  name: string
+  namespace: string
+  type: string
+  cluster_ip: string
+  external_ips: string[]
+  ports: string[]
+  created: string
+}
+
+export interface K8sIngress {
+  name: string
+  namespace: string
+  class: string
+  hosts: string[]
+  address: string[]
+  created: string
+}
+
+export interface K8sPV {
+  name: string
+  capacity: string
+  access_modes: string[]
+  reclaim_policy: string
+  status: string
+  claim: string
+  storage_class: string
+  created: string
+}
+
+export interface K8sPVC {
+  name: string
+  namespace: string
+  status: string
+  volume: string
+  capacity: string
+  access_modes: string[]
+  storage_class: string
+  created: string
+}
+
+export interface K8sConfigMap {
+  name: string
+  namespace: string
+  data_count: number
+  created: string
+}
+
+export interface K8sSecret {
+  name: string
+  namespace: string
+  type: string
+  data_count: number
+  created: string
 }
 
 // --- UniFi types ---
@@ -410,6 +686,7 @@ export interface UniFiPort {
   poe_standard: string
   poe_state: string
   vlan: number
+  tagged_vlans: number[]
   rx_bytes: number
   tx_bytes: number
   full_duplex: boolean

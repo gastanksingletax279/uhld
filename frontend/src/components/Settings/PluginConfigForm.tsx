@@ -38,10 +38,19 @@ export function PluginConfigForm({
   loading = false,
   submitLabel = 'Save',
 }: PluginConfigFormProps) {
+  // Track which textarea-sensitive fields had a stored value on load
+  const storedTextareaFields = new Set(
+    Object.entries(schema.properties ?? {})
+      .filter(([k, p]) => p.format === 'textarea' && p.sensitive && initialValues[k] === '***')
+      .map(([k]) => k)
+  )
+
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const defaults: Record<string, unknown> = {}
     for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-      defaults[key] = initialValues[key] ?? prop.default ?? ''
+      const raw = initialValues[key] ?? prop.default ?? ''
+      // Textarea+sensitive: show empty so '***' doesn't appear as literal text in the textarea
+      defaults[key] = (prop.format === 'textarea' && prop.sensitive && raw === '***') ? '' : raw
     }
     return defaults
   })
@@ -57,6 +66,8 @@ export function PluginConfigForm({
       const prop = schema.properties[key]
       // Don't submit masked sentinel — backend will keep the existing encrypted value
       if (prop?.sensitive && val === '***') continue
+      // Textarea-sensitive left empty = user didn't change it, keep existing encrypted value
+      if (prop?.sensitive && prop?.format === 'textarea' && val === '' && storedTextareaFields.has(key)) continue
       cleaned[key] = val === '' ? undefined : val
     }
     onSubmit(cleaned)
@@ -111,6 +122,17 @@ export function PluginConfigForm({
               min={prop.minimum}
               max={prop.maximum}
               required={required.has(key)}
+            />
+          ) : prop.format === 'textarea' ? (
+            <textarea
+              id={`field-${key}`}
+              className="input font-mono text-xs resize-y min-h-[8rem]"
+              value={String(values[key] ?? '')}
+              onChange={(e) => setValue(key, e.target.value)}
+              placeholder={storedTextareaFields.has(key) ? '(stored — paste new content to replace, or leave blank to keep)' : (prop.placeholder ?? prop.description ?? '')}
+              required={required.has(key) && !storedTextareaFields.has(key)}
+              rows={8}
+              spellCheck={false}
             />
           ) : (
             <input

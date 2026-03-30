@@ -11,7 +11,7 @@ interface PluginState {
   fetchSummary: () => Promise<void>
   enablePlugin: (id: string, config: Record<string, unknown>, instanceId?: string, instanceLabel?: string) => Promise<void>
   disablePlugin: (id: string, instanceId?: string) => Promise<void>
-  updateConfig: (id: string, config: Record<string, unknown>, instanceId?: string) => Promise<void>
+  updateConfig: (id: string, config: Record<string, unknown>, instanceId?: string, instanceLabel?: string) => Promise<void>
   clearPlugin: (id: string, instanceId?: string) => Promise<void>
   getPluginDetail: (id: string, instanceId?: string) => Promise<PluginDetail>
   deleteInstance: (id: string, instanceId: string) => Promise<void>
@@ -56,8 +56,8 @@ export const usePluginStore = create<PluginState>((set) => ({
     set({ plugins })
   },
 
-  updateConfig: async (id, config, instanceId = 'default') => {
-    await api.updatePluginConfig(id, config, instanceId)
+  updateConfig: async (id, config, instanceId = 'default', instanceLabel) => {
+    await api.updatePluginConfig(id, config, instanceId, instanceLabel)
     const plugins = await api.listPlugins()
     set({ plugins })
   },

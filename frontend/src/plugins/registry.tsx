@@ -9,6 +9,10 @@ import { TailscaleWidget } from './tailscale/Widget'
 import { TailscaleView } from './tailscale/View'
 import { UniFiWidget } from './unifi/Widget'
 import { UniFiView } from './unifi/View'
+import { DockerWidget } from './docker/Widget'
+import { DockerView } from './docker/View'
+import { KubernetesWidget } from './kubernetes/Widget'
+import { KubernetesView } from './kubernetes/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -16,6 +20,8 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   pihole: PiHoleWidget,
   tailscale: TailscaleWidget,
   unifi: UniFiWidget,
+  docker: DockerWidget,
+  kubernetes: KubernetesWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -24,4 +30,6 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   pihole: PiHoleView,
   tailscale: TailscaleView,
   unifi: UniFiView,
+  docker: DockerView,
+  kubernetes: KubernetesView,
 }

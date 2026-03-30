@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   api, TailscaleDevice, TailscaleUser, TailscaleDNS, TailscaleLocalStatus,
+  TailscaleKey, TailscaleTailnetSettings, TailscaleDeviceRoutes,
 } from '../../api/client'
 import {
   RefreshCw, Network, Loader2, AlertCircle, Copy, Check,
   ArrowUpCircle, Users, Globe, Shield, Wifi, Server,
+  Container, Home, Key, Tv, Cpu, Router, Cloud, Lock,
+  MonitorSmartphone, Wrench, Tag, Trash2, Timer, ShieldCheck,
+  Settings, CheckCircle2, MoreVertical, Pencil, X,
 } from 'lucide-react'
 
-type Tab = 'devices' | 'users' | 'dns' | 'acl'
+type Tab = 'devices' | 'users' | 'dns' | 'acl' | 'keys' | 'settings'
 type SortKey = 'hostname' | 'os' | 'user' | 'lastSeen' | 'online' | 'clientVersion'
 type SortDir = 'asc' | 'desc'
 
@@ -42,6 +46,34 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
   const [aclSaving, setAclSaving] = useState(false)
   const [aclSaved, setAclSaved] = useState(false)
   const [aclValidationError, setAclValidationError] = useState<string | null>(null)
+  const [aclValidating, setAclValidating] = useState(false)
+  const [aclValidateResult, setAclValidateResult] = useState<{ valid: boolean; message: string } | null>(null)
+
+  // Keys
+  const [keys, setKeys] = useState<TailscaleKey[]>([])
+  const [keysLoading, setKeysLoading] = useState(false)
+  const [keysLoaded, setKeysLoaded] = useState(false)
+  const [keysError, setKeysError] = useState<string | null>(null)
+
+  // Tailnet settings
+  const [tsSettings, setTsSettings] = useState<TailscaleTailnetSettings | null>(null)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+
+  // Device actions
+  const [deviceActionLoading, setDeviceActionLoading] = useState<string | null>(null)
+  const [deviceActionError, setDeviceActionError] = useState<string | null>(null)
+
+  // Device edit modal
+  type DeviceModal =
+    | { type: 'rename';  device: TailscaleDevice; value: string }
+    | { type: 'set-ip';  device: TailscaleDevice; value: string }
+    | { type: 'routes';  device: TailscaleDevice; routes: TailscaleDeviceRoutes | null; loading: boolean; enabled: Set<string> }
+    | { type: 'tags';    device: TailscaleDevice; tags: string[]; input: string }
+  const [deviceModal, setDeviceModal] = useState<DeviceModal | null>(null)
+  const [modalSaving, setModalSaving] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
 
   // Local sidecar status
   const [localStatus, setLocalStatus] = useState<TailscaleLocalStatus | null>(null)
@@ -89,6 +121,114 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
     } finally { setAclLoading(false) }
   }
 
+  async function loadKeys() {
+    setKeysLoading(true); setKeysError(null)
+    try {
+      const data = await tailscale.keys()
+      setKeys(data.keys ?? [])
+      setKeysLoaded(true)
+    } catch (e: unknown) {
+      setKeysError(e instanceof Error ? e.message : 'Failed to load keys')
+    } finally { setKeysLoading(false) }
+  }
+
+  async function loadSettings() {
+    setSettingsLoading(true); setSettingsError(null)
+    try {
+      const data = await tailscale.tailnetSettings()
+      setTsSettings(data)
+      setSettingsLoaded(true)
+    } catch (e: unknown) {
+      setSettingsError(e instanceof Error ? e.message : 'Failed to load settings')
+    } finally { setSettingsLoading(false) }
+  }
+
+  async function handleValidateAcl() {
+    setAclValidating(true); setAclValidateResult(null); setAclError(null)
+    try {
+      const result = await tailscale.validateAcl(acl)
+      setAclValidateResult(result)
+    } catch (e: unknown) {
+      setAclError(e instanceof Error ? e.message : 'Validation failed')
+    } finally { setAclValidating(false) }
+  }
+
+  async function handleDeviceAction(
+    action: 'delete' | 'expire' | 'authorize' | 'toggle-expiry',
+    deviceId: string,
+    extra?: unknown,
+  ) {
+    setDeviceActionLoading(`${action}:${deviceId}`)
+    setDeviceActionError(null)
+    try {
+      if (action === 'delete') {
+        if (!window.confirm('Delete this device from your tailnet? This cannot be undone.')) return
+        await tailscale.deleteDevice(deviceId)
+        setDevices((prev) => prev.filter((d) => d.id !== deviceId))
+      } else if (action === 'expire') {
+        await tailscale.expireDeviceKey(deviceId)
+        setDevices((prev) => prev.map((d) => d.id === deviceId ? { ...d, keyExpiryDisabled: false } : d))
+      } else if (action === 'authorize') {
+        await tailscale.authorizeDevice(deviceId)
+        setDevices((prev) => prev.map((d) => d.id === deviceId ? { ...d, authorized: true } : d))
+      } else if (action === 'toggle-expiry') {
+        const disabled = extra as boolean
+        await tailscale.setKeyExpiry(deviceId, disabled)
+        setDevices((prev) => prev.map((d) => d.id === deviceId ? { ...d, keyExpiryDisabled: disabled } : d))
+      }
+    } catch (e: unknown) {
+      setDeviceActionError(e instanceof Error ? e.message : 'Action failed')
+    } finally { setDeviceActionLoading(null) }
+  }
+
+  async function openDeviceModal(action: 'rename' | 'set-ip' | 'routes' | 'tags', device: TailscaleDevice) {
+    setModalError(null)
+    if (action === 'rename') {
+      const current = device.name ? device.name.split('.')[0] : device.hostname
+      setDeviceModal({ type: 'rename', device, value: current })
+    } else if (action === 'set-ip') {
+      const ipv4 = device.addresses?.find((a) => !a.includes(':')) ?? ''
+      setDeviceModal({ type: 'set-ip', device, value: ipv4 })
+    } else if (action === 'routes') {
+      setDeviceModal({ type: 'routes', device, routes: null, loading: true, enabled: new Set(device.enabledRoutes ?? []) })
+      try {
+        const r = await tailscale.getDeviceRoutes(device.id)
+        setDeviceModal({ type: 'routes', device, routes: r, loading: false, enabled: new Set(r.enabledRoutes ?? []) })
+      } catch (e: unknown) {
+        setModalError(e instanceof Error ? e.message : 'Failed to load routes')
+        setDeviceModal((m) => m?.type === 'routes' ? { ...m, loading: false } : m)
+      }
+    } else if (action === 'tags') {
+      setDeviceModal({ type: 'tags', device, tags: [...(device.tags ?? [])], input: '' })
+    }
+  }
+
+  async function saveDeviceModal() {
+    if (!deviceModal) return
+    setModalSaving(true); setModalError(null)
+    try {
+      const { device } = deviceModal
+      if (deviceModal.type === 'rename') {
+        await tailscale.renameDevice(device.id, deviceModal.value)
+        setDevices((prev) => prev.map((d) => d.id === device.id ? { ...d, name: deviceModal.value } : d))
+        setDeviceModal(null)
+      } else if (deviceModal.type === 'set-ip') {
+        await tailscale.setDeviceIp(device.id, deviceModal.value)
+        setDeviceModal(null)
+      } else if (deviceModal.type === 'routes') {
+        const result = await tailscale.setDeviceRoutes(device.id, [...deviceModal.enabled])
+        setDevices((prev) => prev.map((d) => d.id === device.id ? { ...d, enabledRoutes: result.enabledRoutes, advertisedRoutes: result.advertisedRoutes } : d))
+        setDeviceModal(null)
+      } else if (deviceModal.type === 'tags') {
+        await tailscale.setDeviceTags(device.id, deviceModal.tags)
+        setDevices((prev) => prev.map((d) => d.id === device.id ? { ...d, tags: deviceModal.tags } : d))
+        setDeviceModal(null)
+      }
+    } catch (e: unknown) {
+      setModalError(e instanceof Error ? e.message : 'Save failed')
+    } finally { setModalSaving(false) }
+  }
+
   useEffect(() => {
     loadDevices()
     // Also fetch local sidecar status silently — no error display if unavailable
@@ -96,16 +236,20 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
   }, [])
 
   useEffect(() => {
-    if (tab === 'users'  && !usersLoaded  && !usersLoading)  loadUsers()
-    if (tab === 'dns'    && !dnsLoaded    && !dnsLoading)    loadDns()
-    if (tab === 'acl'    && !aclLoaded    && !aclLoading)    loadAcl()
+    if (tab === 'users'    && !usersLoaded    && !usersLoading)    loadUsers()
+    if (tab === 'dns'      && !dnsLoaded      && !dnsLoading)      loadDns()
+    if (tab === 'acl'      && !aclLoaded      && !aclLoading)      loadAcl()
+    if (tab === 'keys'     && !keysLoaded     && !keysLoading)     loadKeys()
+    if (tab === 'settings' && !settingsLoaded && !settingsLoading) loadSettings()
   }, [tab])
 
   function refresh() {
-    if (tab === 'devices') loadDevices()
-    else if (tab === 'users') { setUsersLoaded(false); loadUsers() }
-    else if (tab === 'dns')   { setDnsLoaded(false);   loadDns() }
-    else if (tab === 'acl')   { setAclLoaded(false);   loadAcl() }
+    if      (tab === 'devices')  loadDevices()
+    else if (tab === 'users')    { setUsersLoaded(false);    loadUsers() }
+    else if (tab === 'dns')      { setDnsLoaded(false);      loadDns() }
+    else if (tab === 'acl')      { setAclLoaded(false);      loadAcl() }
+    else if (tab === 'keys')     { setKeysLoaded(false);     loadKeys() }
+    else if (tab === 'settings') { setSettingsLoaded(false); loadSettings() }
   }
 
   function handleSort(key: SortKey) {
@@ -115,11 +259,6 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
 
   async function handleSaveAcl() {
     setAclValidationError(null)
-    // Best-effort JSON validation (strip // comments for basic check)
-    const stripped = acl.replace(/\/\/[^\n]*/g, '').trim()
-    try { JSON.parse(stripped) } catch {
-      setAclValidationError('Warning: content may not be valid JSON/HuJSON. The API will validate on save.')
-    }
     setAclSaving(true); setAclError(null); setAclSaved(false)
     try {
       await tailscale.saveAcl(acl)
@@ -150,15 +289,19 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
   })
 
   const isLoading = tab === 'devices' ? devLoading
-    : tab === 'users' ? usersLoading
-    : tab === 'dns'   ? dnsLoading
-    : aclLoading
+    : tab === 'users'    ? usersLoading
+    : tab === 'dns'      ? dnsLoading
+    : tab === 'acl'      ? aclLoading
+    : tab === 'keys'     ? keysLoading
+    : settingsLoading
 
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'devices', label: 'Devices',         icon: <Server className="w-3.5 h-3.5" /> },
-    { id: 'users',   label: 'Users',            icon: <Users className="w-3.5 h-3.5" /> },
-    { id: 'dns',     label: 'DNS',              icon: <Globe className="w-3.5 h-3.5" /> },
-    { id: 'acl',     label: 'Access Control',   icon: <Shield className="w-3.5 h-3.5" /> },
+    { id: 'devices',  label: 'Devices',        icon: <Server className="w-3.5 h-3.5" /> },
+    { id: 'users',    label: 'Users',           icon: <Users className="w-3.5 h-3.5" /> },
+    { id: 'dns',      label: 'DNS',             icon: <Globe className="w-3.5 h-3.5" /> },
+    { id: 'acl',      label: 'Access Control',  icon: <Shield className="w-3.5 h-3.5" /> },
+    { id: 'keys',     label: 'Keys',            icon: <Key className="w-3.5 h-3.5" /> },
+    { id: 'settings', label: 'Settings',        icon: <Settings className="w-3.5 h-3.5" /> },
   ]
 
   return (
@@ -219,27 +362,37 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
         devices.length === 0 ? (
           <div className="text-sm text-muted text-center py-12">No devices found in this tailnet.</div>
         ) : (
-          <div className="card overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-surface-4 text-muted">
-                  <Th label="Hostname" col="hostname" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-3 py-2 text-left font-medium">IP</th>
-                  <Th label="OS" col="os" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <Th label="User" col="user" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <Th label="Version" col="clientVersion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <th className="px-3 py-2 text-left font-medium">Routes</th>
-                  <th className="px-3 py-2 text-left font-medium">Expiry</th>
-                  <Th label="Last Seen" col="lastSeen" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                  <Th label="Status" col="online" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((device) => (
-                  <DeviceRow key={device.id} device={device} />
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            {deviceActionError && <ErrorBanner msg={deviceActionError} />}
+            <div className="card overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-surface-4 text-muted">
+                    <Th label="Hostname" col="hostname" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <th className="px-3 py-2 text-left font-medium">IP</th>
+                    <Th label="OS" col="os" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <Th label="User" col="user" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <Th label="Version" col="clientVersion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <th className="px-3 py-2 text-left font-medium">Routes</th>
+                    <th className="px-3 py-2 text-left font-medium">Expiry</th>
+                    <Th label="Last Seen" col="lastSeen" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <Th label="Status" col="online" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                    <th className="px-3 py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((device) => (
+                    <DeviceRow
+                      key={device.id}
+                      device={device}
+                      actionLoading={deviceActionLoading}
+                      onAction={handleDeviceAction}
+                      onMenuAction={openDeviceModal}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )
       )}
@@ -276,12 +429,19 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
         dnsLoading ? <LoadingSpinner /> :
         !dns ? null : (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               <DnsCard title="MagicDNS">
-                <div className={`text-sm font-medium ${dns.magicDNS ? 'text-green-400' : 'text-muted'}`}>
-                  {dns.magicDNS ? 'Enabled' : 'Disabled'}
-                </div>
+                <BoolBadge on={dns.magicDNS} />
               </DnsCard>
+              <DnsCard title="Override Local DNS">
+                <BoolBadge on={dns.overrideLocalDNS} />
+                <p className="text-[10px] text-muted mt-1">Tailscale resolvers take precedence over OS DNS when enabled.</p>
+              </DnsCard>
+              {dns.tailnetDomain && (
+                <DnsCard title="Tailnet Domain">
+                  <div className="font-mono text-xs text-gray-300">{dns.tailnetDomain}</div>
+                </DnsCard>
+              )}
               <DnsCard title="Custom Nameservers">
                 {dns.nameservers.length === 0
                   ? <span className="text-muted text-xs">None configured</span>
@@ -297,6 +457,31 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
                   ))}
               </DnsCard>
             </div>
+            {Object.keys(dns.splitDns ?? {}).length > 0 && (
+              <div>
+                <div className="text-xs text-muted mb-2 font-medium uppercase tracking-wide">Split DNS</div>
+                <div className="card overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-surface-4 text-muted">
+                        <th className="px-3 py-2 text-left font-medium">Domain</th>
+                        <th className="px-3 py-2 text-left font-medium">Resolvers</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(dns.splitDns).map(([domain, resolvers]) => (
+                        <tr key={domain} className="border-b border-surface-4/50">
+                          <td className="px-3 py-2 font-mono text-gray-300">{domain}</td>
+                          <td className="px-3 py-2 font-mono text-muted">
+                            {resolvers.length === 0 ? <span className="italic">none (blocked)</span> : resolvers.join(', ')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )
       )}
@@ -313,6 +498,13 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
               <div className="flex items-center gap-2">
                 {aclSaved && <span className="text-xs text-green-400">Saved!</span>}
                 <button
+                  onClick={handleValidateAcl}
+                  disabled={aclValidating || !acl}
+                  className="btn-ghost text-xs py-1"
+                >
+                  {aclValidating ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Validate'}
+                </button>
+                <button
                   onClick={handleSaveAcl}
                   disabled={aclSaving || !acl}
                   className="btn-primary text-xs py-1"
@@ -321,6 +513,18 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
                 </button>
               </div>
             </div>
+            {aclValidateResult && (
+              <div className={`flex items-center gap-2 text-xs rounded px-3 py-2 ${
+                aclValidateResult.valid
+                  ? 'text-green-400 bg-green-500/10 border border-green-500/30'
+                  : 'text-warning bg-warning/10 border border-warning/30'
+              }`}>
+                {aclValidateResult.valid
+                  ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                  : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+                {aclValidateResult.message}
+              </div>
+            )}
             {aclValidationError && (
               <div className="flex items-center gap-2 text-xs text-warning bg-warning/10 border border-warning/30 rounded px-3 py-2">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
@@ -328,11 +532,276 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
               </div>
             )}
             {aclError && <ErrorBanner msg={aclError} />}
-            <AclEditor value={acl} onChange={setAcl} />
+            <AclEditor value={acl} onChange={(v) => { setAcl(v); setAclValidateResult(null) }} />
           </div>
         )
       )}
+      {/* ── Keys tab ── */}
+      {tab === 'keys' && (
+        keysError ? <ErrorBanner msg={keysError} /> :
+        keysLoading ? <LoadingSpinner /> :
+        keys.length === 0 ? (
+          <div className="text-sm text-muted text-center py-12">No keys found.</div>
+        ) : (
+          <div className="card overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-4 text-muted">
+                  <th className="px-3 py-2 text-left font-medium">Description</th>
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Capabilities</th>
+                  <th className="px-3 py-2 text-left font-medium">Created</th>
+                  <th className="px-3 py-2 text-left font-medium">Expires</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map((k) => <KeyRow key={k.id} k={k} />)}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* ── Settings tab ── */}
+      {tab === 'settings' && (
+        settingsError ? <ErrorBanner msg={settingsError} /> :
+        settingsLoading ? <LoadingSpinner /> :
+        !tsSettings ? null : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <SettingCard title="Device Approval" value={tsSettings.devicesApprovalOn} />
+            <SettingCard title="User Approval" value={tsSettings.usersApprovalOn} />
+            <SettingCard title="Device Auto-Updates" value={tsSettings.devicesAutoUpdatesOn} />
+            <SettingCard title="HTTPS Certificates" value={tsSettings.httpsEnabled} />
+            <SettingCard title="Network Flow Logging" value={tsSettings.networkFlowLoggingOn} />
+            <SettingCard title="Device Posture Collection" value={tsSettings.postureIdentityCollectionOn} />
+            <SettingCard title="Regional Routing" value={tsSettings.regionalRoutingOn} />
+            {tsSettings.devicesKeyDurationDays != null && (
+              <DnsCard title="Key Expiry Duration">
+                <div className="text-sm font-medium text-gray-200">{tsSettings.devicesKeyDurationDays} days</div>
+              </DnsCard>
+            )}
+            {tsSettings.aclsExternallyManagedOn != null && (
+              <DnsCard title="ACL Management">
+                {tsSettings.aclsExternallyManagedOn ? (
+                  <div className="space-y-1">
+                    <span className="badge bg-yellow-500/20 text-yellow-300">Externally managed</span>
+                    {tsSettings.aclsExternalLink && (
+                      <div className="font-mono text-[10px] text-muted truncate">{tsSettings.aclsExternalLink}</div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="badge bg-surface-4 text-muted">Admin console</span>
+                )}
+              </DnsCard>
+            )}
+          </div>
+        )
+      )}
+
+      {/* ── Device edit modal ── */}
+      {deviceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setDeviceModal(null)}>
+          <div className="bg-surface-2 border border-surface-4 rounded-lg shadow-xl w-full max-w-md mx-4 p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-white text-sm">
+                {deviceModal.type === 'rename'  && 'Rename Machine'}
+                {deviceModal.type === 'set-ip'  && 'Set IPv4 Address'}
+                {deviceModal.type === 'routes'  && 'Edit Route Settings'}
+                {deviceModal.type === 'tags'    && 'Edit ACL Tags'}
+              </h3>
+              <button onClick={() => setDeviceModal(null)} className="text-muted hover:text-gray-300"><X className="w-4 h-4" /></button>
+            </div>
+
+            {deviceModal.type === 'rename' && (
+              <input
+                className="input w-full mb-4"
+                value={deviceModal.value}
+                onChange={(e) => setDeviceModal({ ...deviceModal, value: e.target.value })}
+                placeholder="machine-name"
+                autoFocus
+              />
+            )}
+
+            {deviceModal.type === 'set-ip' && (
+              <div className="mb-4 space-y-1">
+                <input
+                  className="input w-full"
+                  value={deviceModal.value}
+                  onChange={(e) => setDeviceModal({ ...deviceModal, value: e.target.value })}
+                  placeholder="100.x.x.x"
+                  autoFocus
+                />
+                <p className="text-xs text-muted">Changing the IP will break existing connections to this machine.</p>
+              </div>
+            )}
+
+            {deviceModal.type === 'routes' && (
+              <div className="mb-4">
+                {deviceModal.loading ? (
+                  <div className="flex items-center gap-2 text-muted text-sm py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading routes…</div>
+                ) : !deviceModal.routes?.advertisedRoutes?.length ? (
+                  <p className="text-sm text-muted py-2">This device has no advertised routes.</p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted mb-2">Enable or disable advertised subnet routes and exit node:</p>
+                    {deviceModal.routes.advertisedRoutes.map((route) => (
+                      <label key={route} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={deviceModal.enabled.has(route)}
+                          onChange={(e) => {
+                            const next = new Set(deviceModal.enabled)
+                            if (e.target.checked) next.add(route)
+                            else next.delete(route)
+                            setDeviceModal({ ...deviceModal, enabled: next })
+                          }}
+                          className="accent-accent"
+                        />
+                        <span className="font-mono text-xs text-gray-300">{route}</span>
+                        {EXIT_ROUTES.has(route) && <span className="text-[10px] text-purple-300 bg-purple-500/20 px-1 rounded">exit node</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {deviceModal.type === 'tags' && (
+              <div className="mb-4 space-y-3">
+                <div className="flex flex-wrap gap-1 min-h-[28px]">
+                  {deviceModal.tags.length === 0 && <span className="text-muted text-xs">No tags</span>}
+                  {deviceModal.tags.map((tag) => (
+                    <span key={tag} className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-3 text-gray-300">
+                      {tag}
+                      <button onClick={() => setDeviceModal({ ...deviceModal, tags: deviceModal.tags.filter((t) => t !== tag) })} className="text-muted hover:text-danger ml-0.5"><X className="w-3 h-3" /></button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    className="input flex-1 text-xs"
+                    value={deviceModal.input}
+                    onChange={(e) => setDeviceModal({ ...deviceModal, input: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && deviceModal.input.trim()) {
+                        const tag = deviceModal.input.trim().startsWith('tag:') ? deviceModal.input.trim() : `tag:${deviceModal.input.trim()}`
+                        if (!deviceModal.tags.includes(tag)) setDeviceModal({ ...deviceModal, tags: [...deviceModal.tags, tag], input: '' })
+                        else setDeviceModal({ ...deviceModal, input: '' })
+                      }
+                    }}
+                    placeholder="tag:name (Enter to add)"
+                  />
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={() => {
+                      if (!deviceModal.input.trim()) return
+                      const tag = deviceModal.input.trim().startsWith('tag:') ? deviceModal.input.trim() : `tag:${deviceModal.input.trim()}`
+                      if (!deviceModal.tags.includes(tag)) setDeviceModal({ ...deviceModal, tags: [...deviceModal.tags, tag], input: '' })
+                      else setDeviceModal({ ...deviceModal, input: '' })
+                    }}
+                  >Add</button>
+                </div>
+                <p className="text-xs text-muted">Tags must exist in your ACL policy file.</p>
+              </div>
+            )}
+
+            {modalError && <div className="text-xs text-danger mb-3">{modalError}</div>}
+
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost text-xs" onClick={() => setDeviceModal(null)}>Cancel</button>
+              <button
+                className="btn-primary text-xs"
+                onClick={saveDeviceModal}
+                disabled={modalSaving || (deviceModal.type === 'routes' && deviceModal.loading)}
+              >
+                {modalSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+// ── Tag badge ─────────────────────────────────────────────────────────────────
+
+type TagStyle = { bg: string; text: string; icon: React.ReactNode }
+
+const TAG_KEYWORD_MAP: { keywords: string[]; style: TagStyle }[] = [
+  {
+    keywords: ['k8s', 'kubernetes', 'kube'],
+    style: { bg: 'bg-blue-500/20', text: 'text-blue-300', icon: <Container className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['home', 'house', 'local'],
+    style: { bg: 'bg-green-500/20', text: 'text-green-300', icon: <Home className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['vpn', 'exit', 'relay'],
+    style: { bg: 'bg-purple-500/20', text: 'text-purple-300', icon: <Lock className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['server', 'host', 'node', 'nas'],
+    style: { bg: 'bg-orange-500/20', text: 'text-orange-300', icon: <Server className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['router', 'gateway', 'net', 'switch'],
+    style: { bg: 'bg-cyan-500/20', text: 'text-cyan-300', icon: <Router className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['pi', 'raspberry', 'arm'],
+    style: { bg: 'bg-red-500/20', text: 'text-red-300', icon: <Cpu className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['cloud', 'aws', 'gcp', 'azure', 'vps', 'remote'],
+    style: { bg: 'bg-sky-500/20', text: 'text-sky-300', icon: <Cloud className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['media', 'plex', 'jellyfin', 'tv', 'stream'],
+    style: { bg: 'bg-pink-500/20', text: 'text-pink-300', icon: <Tv className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['phone', 'mobile', 'android', 'ios', 'iphone', 'tablet'],
+    style: { bg: 'bg-violet-500/20', text: 'text-violet-300', icon: <MonitorSmartphone className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['dev', 'test', 'lab', 'build', 'ci'],
+    style: { bg: 'bg-yellow-500/20', text: 'text-yellow-300', icon: <Wrench className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['ssh', 'admin', 'key', 'auth', 'mgmt'],
+    style: { bg: 'bg-amber-500/20', text: 'text-amber-300', icon: <Key className="w-2.5 h-2.5" /> },
+  },
+  {
+    keywords: ['wifi', 'wireless', 'ap', 'wlan'],
+    style: { bg: 'bg-teal-500/20', text: 'text-teal-300', icon: <Wifi className="w-2.5 h-2.5" /> },
+  },
+]
+
+const DEFAULT_TAG_STYLE: TagStyle = {
+  bg: 'bg-surface-4',
+  text: 'text-muted',
+  icon: <Tag className="w-2.5 h-2.5" />,
+}
+
+function getTagStyle(tag: string): TagStyle {
+  const lower = tag.toLowerCase()
+  for (const { keywords, style } of TAG_KEYWORD_MAP) {
+    if (keywords.some((kw) => lower.includes(kw))) return style
+  }
+  return DEFAULT_TAG_STYLE
+}
+
+function TagBadge({ tag }: { tag: string }) {
+  const label = tag.replace(/^tag:/, '')
+  const { bg, text, icon } = getTagStyle(label)
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${bg} ${text}`}>
+      {icon}
+      {label}
+    </span>
   )
 }
 
@@ -340,10 +809,17 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
 
 const EXIT_ROUTES = new Set(['0.0.0.0/0', '::/0'])
 
-function DeviceRow({ device }: { device: TailscaleDevice }) {
+function DeviceRow({ device, actionLoading, onAction, onMenuAction }: {
+  device: TailscaleDevice
+  actionLoading: string | null
+  onAction: (action: 'delete' | 'expire' | 'authorize' | 'toggle-expiry', deviceId: string, extra?: unknown) => void
+  onMenuAction: (action: 'rename' | 'set-ip' | 'routes' | 'tags', device: TailscaleDevice) => void
+}) {
   const ipv4 = device.addresses?.find((a) => !a.includes(':')) ?? device.addresses?.[0] ?? '—'
   const lastSeen = device.online ? 'now' : fmtRelativeTime(device.lastSeen)
   const [copied, setCopied] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const displayName = device.name ? device.name.split('.')[0] : device.hostname
   const showOsHostname = device.hostname && device.hostname !== displayName
@@ -365,6 +841,29 @@ function DeviceRow({ device }: { device: TailscaleDevice }) {
     })
   }
 
+  useEffect(() => {
+    if (!menuOpen) return
+    function handler(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
+  function menuItem(label: string, icon: React.ReactNode, onClick: () => void, danger = false) {
+    return (
+      <button
+        key={label}
+        className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-surface-3 transition-colors ${danger ? 'text-danger' : 'text-gray-300'}`}
+        onClick={() => { setMenuOpen(false); onClick() }}
+      >
+        {icon}{label}
+      </button>
+    )
+  }
+
+  const isLoading = !!actionLoading && actionLoading.includes(device.id)
+
   return (
     <tr className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
       {/* Hostname + tags */}
@@ -373,11 +872,7 @@ function DeviceRow({ device }: { device: TailscaleDevice }) {
         {showOsHostname && <div className="text-muted text-[10px] font-mono">{device.hostname}</div>}
         {device.tags && device.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
-            {device.tags.map((tag) => (
-              <span key={tag} className="px-1 py-0.5 rounded text-[10px] bg-accent-dim/30 text-accent font-mono">
-                {tag.replace('tag:', '')}
-              </span>
-            ))}
+            {device.tags.map((tag) => <TagBadge key={tag} tag={tag} />)}
           </div>
         )}
       </td>
@@ -435,6 +930,38 @@ function DeviceRow({ device }: { device: TailscaleDevice }) {
           ? <span className="badge-ok">online</span>
           : <span className="badge-muted">offline</span>
         }
+      </td>
+      {/* Three-dot menu */}
+      <td className="px-2 py-2">
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            disabled={isLoading}
+            className="text-muted hover:text-gray-300 transition-colors p-0.5 rounded"
+            title="Device actions"
+          >
+            {isLoading
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <MoreVertical className="w-4 h-4" />}
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-6 z-40 bg-surface-2 border border-surface-4 rounded shadow-lg min-w-[180px] py-1">
+              {menuItem('Edit machine name',  <Pencil className="w-3.5 h-3.5" />, () => onMenuAction('rename', device))}
+              {menuItem('Edit machine IPv4',  <Pencil className="w-3.5 h-3.5" />, () => onMenuAction('set-ip', device))}
+              {menuItem('Edit route settings',<Router className="w-3.5 h-3.5" />, () => onMenuAction('routes', device))}
+              {menuItem('Edit ACL tags',      <Tag    className="w-3.5 h-3.5" />, () => onMenuAction('tags', device))}
+              {menuItem(
+                device.keyExpiryDisabled ? 'Enable key expiry' : 'Disable key expiry',
+                <Key className="w-3.5 h-3.5" />,
+                () => onAction('toggle-expiry', device.id, !device.keyExpiryDisabled),
+              )}
+              {!device.authorized && menuItem('Authorize', <ShieldCheck className="w-3.5 h-3.5" />, () => onAction('authorize', device.id))}
+              <div className="border-t border-surface-4 my-1" />
+              {menuItem('Expire key now', <Timer  className="w-3.5 h-3.5" />, () => onAction('expire', device.id))}
+              {menuItem('Remove',         <Trash2 className="w-3.5 h-3.5" />, () => onAction('delete', device.id), true)}
+            </div>
+          )}
+        </div>
       </td>
     </tr>
   )
@@ -519,6 +1046,85 @@ function AclEditor({ value, onChange }: { value: string; onChange: (v: string) =
       />
     </div>
   )
+}
+
+// ── Key row ───────────────────────────────────────────────────────────────────
+
+function KeyRow({ k }: { k: TailscaleKey }) {
+  const isExpired = k.expires ? new Date(k.expires) < new Date() : false
+  const isRevoked = !!k.revoked
+  const isInvalid = k.invalid || isExpired || isRevoked
+  const caps = k.capabilities?.devices?.create
+
+  const keyTypeColors: Record<string, string> = {
+    auth:      'bg-blue-500/20 text-blue-300',
+    api:       'bg-purple-500/20 text-purple-300',
+    client:    'bg-orange-500/20 text-orange-300',
+    federated: 'bg-teal-500/20 text-teal-300',
+  }
+
+  return (
+    <tr className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+      <td className="px-3 py-2 text-gray-300 max-w-[200px] truncate" title={k.description || k.id}>
+        {k.description || <span className="font-mono text-muted text-[10px]">{k.id}</span>}
+      </td>
+      <td className="px-3 py-2">
+        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium capitalize ${keyTypeColors[k.keyType] ?? 'bg-surface-4 text-muted'}`}>
+          {k.keyType}
+        </span>
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap gap-1">
+          {caps?.reusable      && <span className="badge bg-surface-4 text-muted">reusable</span>}
+          {caps?.ephemeral     && <span className="badge bg-surface-4 text-muted">ephemeral</span>}
+          {caps?.preauthorized && <span className="badge bg-green-500/20 text-green-300">pre-auth</span>}
+          {k.scopes?.map((s) => (
+            <span key={s} className="badge bg-surface-4 text-muted">{s}</span>
+          ))}
+        </div>
+      </td>
+      <td className="px-3 py-2 text-muted whitespace-nowrap">{k.created ? fmtRelativeTime(k.created) : '—'}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        {k.expires
+          ? <span className={isExpired ? 'text-danger' : daysUntil(k.expires) <= 7 ? 'text-yellow-400' : 'text-muted'}>
+              {isExpired ? 'Expired' : fmtExpiry(k.expires)}
+            </span>
+          : <span className="text-muted">—</span>
+        }
+      </td>
+      <td className="px-3 py-2">
+        {isRevoked
+          ? <span className="badge-danger">revoked</span>
+          : isExpired
+            ? <span className="badge-danger">expired</span>
+            : <span className="badge-ok">valid</span>
+        }
+      </td>
+    </tr>
+  )
+}
+
+function daysUntil(iso: string): number {
+  return Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000)
+}
+
+// ── Setting card ──────────────────────────────────────────────────────────────
+
+function SettingCard({ title, value }: { title: string; value: boolean | null | undefined }) {
+  return (
+    <DnsCard title={title}>
+      {value == null
+        ? <span className="text-muted text-xs">Unknown</span>
+        : <BoolBadge on={value} />
+      }
+    </DnsCard>
+  )
+}
+
+function BoolBadge({ on }: { on: boolean }) {
+  return on
+    ? <span className="text-sm font-medium text-green-400">Enabled</span>
+    : <span className="text-sm font-medium text-muted">Disabled</span>
 }
 
 // ── DNS card ──────────────────────────────────────────────────────────────────
