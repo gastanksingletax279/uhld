@@ -31,37 +31,64 @@ async def migrate_db() -> None:
     Only runs when the instance_id column is absent.
     """
     async with engine.begin() as conn:
+        table_result = await conn.execute(text("""
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN ('plugin_configs', 'plugin_configs_new')
+        """))
+        tables = {row[0] for row in table_result.fetchall()}
+
+        has_plugin_configs = "plugin_configs" in tables
+        has_plugin_configs_new = "plugin_configs_new" in tables
+
+        # If a previous migration dropped plugin_configs but didn't rename
+        # plugin_configs_new yet, recover by completing the rename.
+        if not has_plugin_configs and has_plugin_configs_new:
+            await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
+            return
+
+        # Fresh install: nothing to migrate, init_db() will create tables.
+        if not has_plugin_configs:
+            return
+
         result = await conn.execute(text("PRAGMA table_info(plugin_configs)"))
         cols = {row[1] for row in result.fetchall()}
 
-        if "instance_id" not in cols:
-            # Recreate table with correct schema, preserving all data
-            await conn.execute(text("""
-                CREATE TABLE plugin_configs_new (
-                    id INTEGER NOT NULL PRIMARY KEY,
-                    plugin_id VARCHAR(64) NOT NULL,
-                    instance_id VARCHAR(64) NOT NULL DEFAULT 'default',
-                    instance_label VARCHAR(128),
-                    enabled BOOLEAN NOT NULL DEFAULT 0,
-                    config_json TEXT,
-                    last_health_check DATETIME,
-                    health_status VARCHAR(16),
-                    health_message TEXT,
-                    created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                    updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                    UNIQUE (plugin_id, instance_id)
-                )
-            """))
-            await conn.execute(text("""
-                INSERT INTO plugin_configs_new
-                    (id, plugin_id, instance_id, instance_label, enabled, config_json,
-                     last_health_check, health_status, health_message, created_at, updated_at)
-                SELECT id, plugin_id, 'default', NULL, enabled, config_json,
-                       last_health_check, health_status, health_message, created_at, updated_at
-                FROM plugin_configs
-            """))
-            await conn.execute(text("DROP TABLE plugin_configs"))
-            await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
+        # Migration already applied. Clean up stale temp table from a prior failed run.
+        if "instance_id" in cols:
+            if has_plugin_configs_new:
+                await conn.execute(text("DROP TABLE plugin_configs_new"))
+            return
+
+        # Recreate table with correct schema, preserving all data.
+        # Drop stale temp table first so interrupted prior runs don't fail here.
+        await conn.execute(text("DROP TABLE IF EXISTS plugin_configs_new"))
+        await conn.execute(text("""
+            CREATE TABLE plugin_configs_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                plugin_id VARCHAR(64) NOT NULL,
+                instance_id VARCHAR(64) NOT NULL DEFAULT 'default',
+                instance_label VARCHAR(128),
+                enabled BOOLEAN NOT NULL DEFAULT 0,
+                config_json TEXT,
+                last_health_check DATETIME,
+                health_status VARCHAR(16),
+                health_message TEXT,
+                created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                UNIQUE (plugin_id, instance_id)
+            )
+        """))
+        await conn.execute(text("""
+            INSERT INTO plugin_configs_new
+                (id, plugin_id, instance_id, instance_label, enabled, config_json,
+                 last_health_check, health_status, health_message, created_at, updated_at)
+            SELECT id, plugin_id, 'default', NULL, enabled, config_json,
+                   last_health_check, health_status, health_message, created_at, updated_at
+            FROM plugin_configs
+        """))
+        await conn.execute(text("DROP TABLE plugin_configs"))
+        await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
