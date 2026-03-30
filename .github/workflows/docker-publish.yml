@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*.*.*"
+  release:
+    types: [released]   # official releases only — pre-releases do not trigger this
   workflow_dispatch:
 
 env:
@@ -40,8 +40,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=sha,prefix=sha-
 
       - name: Build and push
