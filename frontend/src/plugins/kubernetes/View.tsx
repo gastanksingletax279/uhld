@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import {
   api,
   K8sNode, K8sPod, K8sNamespace,
@@ -1275,9 +1275,22 @@ function LoadingSpinner() {
   )
 }
 
-function fmtAge(iso: string): string {
-  if (!iso) return '—'
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+function toEpochMs(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null
+    // Accept both epoch seconds and epoch milliseconds.
+    return value < 1e12 ? value * 1000 : value
+  }
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? null : ms
+}
+
+function fmtAge(ts: string | number | null | undefined): string {
+  const epochMs = toEpochMs(ts)
+  if (epochMs === null) return '—'
+  const diff = Math.floor((Date.now() - epochMs) / 1000)
+  if (diff < 0) return '0s'
   if (diff < 60) return `${diff}s`
   if (diff < 3600) return `${Math.floor(diff / 60)}m`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`
@@ -1372,7 +1385,7 @@ function OverviewPanel({ state, onRefresh }: { state: OverviewState; onRefresh: 
                     <td className="px-3 py-2 text-yellow-300 whitespace-nowrap">{ev.reason}</td>
                     <td className="px-3 py-2 text-muted max-w-xs truncate" title={ev.message}>{ev.message}</td>
                     <td className="px-3 py-2 text-right font-mono text-muted">{ev.count}</td>
-                    <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(new Date(ev.last_time * 1000).toISOString())}</td>
+                    <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(ev.last_time)}</td>
                   </tr>
                 ))}
               </tbody>
