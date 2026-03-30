@@ -94,6 +94,70 @@ On first launch UHLD auto-creates an **`admin` / `admin`** account and immediate
 
 ---
 
+## ⚠️ Security Considerations
+
+**USE AT YOUR OWN RISK.** UHLD has access to sensitive infrastructure data and control operations across your entire homelab. Treat it with the same security care you would any administrative dashboard.
+
+### What UHLD Can Access
+
+- **Proxmox:** VM/LXC lifecycle, host information, storage, resource usage
+- **Docker:** Container management, logs, configuration
+- **Kubernetes:** Pod/deployment management, logs, resource access
+- **UniFi:** Network devices, clients, WiFi settings, firewall rules
+- **Tailscale:** Node management, user access, DNS, ACLs
+- **AdGuard/Pi-hole:** DNS blocking rules, query logs
+- **All plugins:** Any credentials you provide are stored and used to access those services
+
+An attacker who gains access to UHLD can:
+- View sensitive data from all connected services
+- Start/stop/reboot VMs and containers
+- Modify network configurations
+- Access logs and diagnostics containing PII or secrets
+- Potentially pivot to other infrastructure components
+
+### Security Best Practices
+
+**Always:**
+- ✅ Use **strong, unique passwords** for the UHLD admin account — this is your primary defense
+- ✅ Enable **2FA (two-factor authentication)** once available (planned feature)
+- ✅ Keep UHLD on a **private network or VPN** — never expose the web interface directly to the public internet
+- ✅ Access only via **HTTPS with valid certificates** in production
+- ✅ Use **separate credentials** for UHLD that differ from your personal/primary passwords
+- ✅ Limit access to **trusted users only** — use role-based access control (planned)
+- ✅ Keep UHLD and all connected services **patched and up-to-date**
+- ✅ Regularly **rotate credentials** for service accounts (API keys, tokens, passwords)
+- ✅ Monitor **logs and audit trails** for suspicious activity
+- ✅ Back up and **encrypt your database** (`/data/uhld.db`) — it contains encrypted credentials and configuration
+
+**Never:**
+- ❌ Use default credentials (`admin/admin`) in production — change immediately
+- ❌ Expose UHLD to the public internet without proper authentication and TLS
+- ❌ Share the `JWT_SECRET` or `ENCRYPTION_KEY` — regenerate if compromised
+- ❌ Store credentials in plain text or commit them to version control
+- ❌ Ignore security updates or plugin vulnerabilities
+
+### Deployment Recommendations
+
+**For homelab/home use:**
+- Deploy behind a **firewall or NAT** (not port-forwarded to the internet)
+- Access via **Tailscale VPN** for remote access (use the Tailscale plugin for easy setup)
+- Disable plugins you don't use to reduce attack surface
+
+**For production/shared environments:**
+- Deploy in a **private network** with network segmentation
+- Use a **reverse proxy** (nginx, Traefik) with authentication (OAuth, OIDC)
+- Enable **HTTPS with valid certificates**
+- Implement **rate limiting** and **WAF rules**
+- Use **secrets management** for all credentials (HashiCorp Vault, K8s Secrets)
+- Enable **audit logging** and **monitoring**
+- Implement **least-privilege access** — separate admin, operator, and viewer roles
+
+### Reporting Security Issues
+
+If you discover a security vulnerability, **do not open a public issue.** Please contact the maintainers privately so the issue can be patched before disclosure.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Description |
