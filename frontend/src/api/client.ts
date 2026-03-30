@@ -195,6 +195,11 @@ export const api = {
       logs:       (id: string, tail = 100) =>
         fetch(`${p}/containers/${id}/logs?tail=${tail}`, { credentials: 'include' })
           .then((r) => r.ok ? r.text() : r.json().then((e) => Promise.reject(new Error(e.detail ?? 'Failed to load logs')))),
+      execWsUrl:  (containerId: string, cmd = '/bin/sh') => {
+        const base = p.replace(/^\/api/, '')
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        return `${wsProto}://${window.location.host}/api${base}/containers/${encodeURIComponent(containerId)}/exec?cmd=${encodeURIComponent(cmd)}`
+      },
     }
   },
 

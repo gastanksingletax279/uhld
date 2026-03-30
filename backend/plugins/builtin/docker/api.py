@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -56,5 +56,9 @@ def make_router(plugin: DockerPlugin) -> APIRouter:
             return {"images": images}
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.websocket("/containers/{container_id}/exec")
+    async def exec_container(container_id: str, websocket: WebSocket, cmd: str = Query(default="/bin/sh")):
+        await plugin._exec_container_shell(container_id, cmd, websocket)
 
     return router

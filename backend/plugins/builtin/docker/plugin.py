@@ -190,6 +190,125 @@ class DockerPlugin(PluginBase):
             raise ValueError(msg)
         return {"message": f"Container {action} successful"}
 
+    async def _exec_container_shell(self, container_id: str, cmd: str, websocket) -> None:
+        """Bridge a FastAPI WebSocket to a Docker exec TTY session via raw socket."""
+        import asyncio
+        import json as _json
+
+        await websocket.accept()
+
+        # Step 1: Create exec instance via REST
+        try:
+            resp = await self._get_client().post(
+                self._url(f"/containers/{container_id}/exec"),
+                json={
+                    "AttachStdin": True,
+                    "AttachStdout": True,
+                    "AttachStderr": True,
+                    "Tty": True,
+                    "Cmd": [cmd],
+                },
+            )
+            resp.raise_for_status()
+            exec_id = resp.json()["Id"]
+        except Exception as exc:
+            try:
+                await websocket.send_text(f"\r\nError creating exec: {exc}\r\n")
+                await websocket.close()
+            except Exception:
+                pass
+            return
+
+        # Step 2: Open a raw socket connection to the Docker daemon
+        host = (self._config.get("host") or "").strip()
+        socket_path = self._config.get("socket_path") or _DEFAULT_SOCKET
+
+        try:
+            if host:
+                clean = host.replace("tcp://", "").replace("http://", "").replace("https://", "")
+                h, _, port_str = clean.partition(":")
+                reader, writer = await asyncio.open_connection(h, int(port_str) if port_str else 2375)
+            else:
+                reader, writer = await asyncio.open_unix_connection(socket_path)
+        except Exception as exc:
+            try:
+                await websocket.send_text(f"\r\nCannot connect to Docker daemon: {exc}\r\n")
+                await websocket.close()
+            except Exception:
+                pass
+            return
+
+        # Step 3: Send HTTP exec start request (raw — httpx can't hijack the connection)
+        body = _json.dumps({"Detach": False, "Tty": True})
+        body_bytes = body.encode()
+        request = (
+            f"POST /{_API_VERSION}/exec/{exec_id}/start HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n"
+            f"\r\n"
+        ).encode() + body_bytes
+        writer.write(request)
+        await writer.drain()
+
+        # Step 4: Consume HTTP response headers
+        try:
+            while True:
+                line = await asyncio.wait_for(reader.readline(), timeout=10)
+                if not line or line == b"\r\n":
+                    break
+        except Exception as exc:
+            try:
+                await websocket.send_text(f"\r\nFailed to start exec: {exc}\r\n")
+                await websocket.close()
+            except Exception:
+                pass
+            writer.close()
+            return
+
+        # Step 5: Bridge raw Docker stream ↔ WebSocket
+        stop = asyncio.Event()
+
+        async def docker_to_ws() -> None:
+            try:
+                while not stop.is_set():
+                    try:
+                        data = await asyncio.wait_for(reader.read(4096), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    if not data:
+                        break
+                    try:
+                        await websocket.send_text(data.decode("utf-8", errors="replace"))
+                    except Exception:
+                        break
+            except Exception:
+                pass
+            finally:
+                stop.set()
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+
+        async def ws_to_docker() -> None:
+            try:
+                async for msg in websocket.iter_text():
+                    if stop.is_set():
+                        break
+                    writer.write(msg.encode())
+                    await writer.drain()
+            except Exception:
+                pass
+            finally:
+                stop.set()
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+
+        await asyncio.gather(docker_to_ws(), ws_to_docker(), return_exceptions=True)
+
     async def _fetch_container_logs(self, container_id: str, tail: int = 100) -> str:
         resp = await self._get_client().get(
             self._url(f"/containers/{container_id}/logs?stdout=1&stderr=1&tail={tail}&timestamps=1")

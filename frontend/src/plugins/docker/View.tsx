@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, DockerContainer, DockerImage } from '../../api/client'
 import {
   RefreshCw, Loader2, AlertCircle, Play, Square, RotateCcw,
-  ScrollText, X, Container, HardDrive,
+  ScrollText, X, Container, HardDrive, Terminal,
 } from 'lucide-react'
 
 type Tab = 'containers' | 'images'
+
+const SHELL_CANDIDATES = ['/bin/sh', '/bin/bash', '/bin/ash', '/usr/bin/sh', '/usr/bin/bash']
 
 export function DockerView({ instanceId = 'default' }: { instanceId?: string }) {
   const docker = api.docker(instanceId)
@@ -28,6 +30,9 @@ export function DockerView({ instanceId = 'default' }: { instanceId?: string }) 
   const [logsText, setLogsText] = useState('')
   const [logsLoading, setLogsLoading] = useState(false)
   const [logsError, setLogsError] = useState<string | null>(null)
+
+  // Shell modal
+  const [shellContainer, setShellContainer] = useState<DockerContainer | null>(null)
 
   async function loadContainers() {
     setContainersLoading(true); setContainersError(null)
@@ -80,6 +85,10 @@ export function DockerView({ instanceId = 'default' }: { instanceId?: string }) 
     } catch (e: unknown) {
       setLogsError(e instanceof Error ? e.message : 'Failed to load logs')
     } finally { setLogsLoading(false) }
+  }
+
+  function openShell(container: DockerContainer) {
+    setShellContainer(container)
   }
 
   const running = containers.filter((c) => c.state === 'running').length
@@ -162,6 +171,7 @@ export function DockerView({ instanceId = 'default' }: { instanceId?: string }) 
                         actionLoading={actionLoading}
                         onAction={containerAction}
                         onLogs={openLogs}
+                        onShell={openShell}
                       />
                     ))}
                 </tbody>
@@ -212,6 +222,28 @@ export function DockerView({ instanceId = 'default' }: { instanceId?: string }) 
         )
       )}
 
+      {/* Shell modal */}
+      {shellContainer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="bg-surface-2 border border-surface-4 rounded-lg shadow-xl w-full max-w-5xl mx-4 flex flex-col" style={{ height: '70vh' }}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-4 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-muted" />
+                <span className="font-semibold text-sm text-white">{shellContainer.names[0] ?? shellContainer.id}</span>
+                <span className="text-muted text-xs">— interactive shell</span>
+              </div>
+              <button onClick={() => setShellContainer(null)} className="text-muted hover:text-gray-300"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ShellTerminal
+                wsUrlFn={(cmd) => docker.execWsUrl(shellContainer.full_id, cmd)}
+                onClose={() => setShellContainer(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Logs modal */}
       {logsContainer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setLogsContainer(null)}>
@@ -240,11 +272,12 @@ export function DockerView({ instanceId = 'default' }: { instanceId?: string }) 
   )
 }
 
-function ContainerRow({ container: c, actionLoading, onAction, onLogs }: {
+function ContainerRow({ container: c, actionLoading, onAction, onLogs, onShell }: {
   container: DockerContainer
   actionLoading: string | null
   onAction: (action: 'start' | 'stop' | 'restart', c: DockerContainer) => void
   onLogs: (c: DockerContainer) => void
+  onShell: (c: DockerContainer) => void
 }) {
   const name = c.names[0] ?? c.id
   const isRunning = c.state === 'running'
@@ -277,6 +310,9 @@ function ContainerRow({ container: c, actionLoading, onAction, onLogs }: {
           )}
           <ActionBtn title="Restart" onClick={() => onAction('restart', c)} loading={loading('restart')} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
           <ActionBtn title="View Logs" onClick={() => onLogs(c)} loading={false} icon={<ScrollText className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
+          {isRunning && (
+            <ActionBtn title="Open Shell" onClick={() => onShell(c)} loading={false} icon={<Terminal className="w-3.5 h-3.5" />} hoverColor="hover:text-purple-400" />
+          )}
         </div>
       </td>
     </tr>
@@ -310,6 +346,123 @@ function ActionBtn({ title, onClick, loading, icon, hoverColor }: {
     >
       {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : icon}
     </button>
+  )
+}
+
+function ShellTerminal({ wsUrlFn, onClose }: {
+  wsUrlFn: (cmd: string) => string
+  onClose: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [status, setStatus] = useState<string>('Connecting…')
+
+  useEffect(() => {
+    let destroyed = false
+    let currentWs: WebSocket | null = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let term: any = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let fitAddon: any = null
+
+    async function tryShell(idx: number) {
+      if (destroyed || idx >= SHELL_CANDIDATES.length) {
+        if (!destroyed) {
+          term?.writeln('\r\n\x1b[31m✗ No shell found in container.\x1b[0m')
+        }
+        return
+      }
+
+      const cmd = SHELL_CANDIDATES[idx]
+      setStatus(`Trying ${cmd}…`)
+      const hasData = { current: false }
+      let noDataTimer: ReturnType<typeof setTimeout> | null = null
+
+      const ws = new WebSocket(wsUrlFn(cmd))
+      currentWs = ws
+
+      ws.onopen = () => {
+        noDataTimer = setTimeout(() => {
+          if (!hasData.current && !destroyed) {
+            ws.close()
+          }
+        }, 1500)
+      }
+
+      ws.onmessage = (ev) => {
+        if (!hasData.current) {
+          hasData.current = true
+          if (noDataTimer) { clearTimeout(noDataTimer); noDataTimer = null }
+          setStatus('')
+          term?.write('\x1b[?25h') // show cursor
+        }
+        term?.write(ev.data)
+      }
+
+      ws.onclose = () => {
+        if (noDataTimer) { clearTimeout(noDataTimer); noDataTimer = null }
+        if (destroyed) return
+        if (!hasData.current) {
+          tryShell(idx + 1)
+        } else {
+          term?.writeln('\r\n\x1b[33m● Session ended — closing…\x1b[0m')
+          setTimeout(() => { if (!destroyed) onClose() }, 1500)
+        }
+      }
+
+      ws.onerror = () => ws.close()
+
+      term.onData((data: string) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(data)
+      })
+    }
+
+    async function init() {
+      if (!containerRef.current) return
+      // @ts-expect-error css import
+      await import('@xterm/xterm/css/xterm.css')
+      const { Terminal } = await import('@xterm/xterm')
+      const { FitAddon } = await import('@xterm/addon-fit')
+
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff' },
+        convertEol: true,
+      })
+      fitAddon = new FitAddon()
+      term.loadAddon(fitAddon)
+      term.open(containerRef.current!)
+      fitAddon.fit()
+
+      const ro = new ResizeObserver(() => { try { fitAddon?.fit() } catch { /* ignore */ } })
+      ro.observe(containerRef.current!)
+
+      tryShell(0)
+
+      return () => { ro.disconnect() }
+    }
+
+    init()
+
+    return () => {
+      destroyed = true
+      currentWs?.close()
+      term?.dispose()
+    }
+  }, [])
+
+  return (
+    <div className="relative w-full h-full bg-[#0d1117] rounded-b-lg overflow-hidden">
+      {status && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <div className="flex items-center gap-2 text-muted text-sm bg-surface-2/80 px-3 py-2 rounded">
+            <Loader2 className="w-4 h-4 animate-spin" />{status}
+          </div>
+        </div>
+      )}
+      <div ref={containerRef} className="w-full h-full p-1" />
+    </div>
   )
 }
 
