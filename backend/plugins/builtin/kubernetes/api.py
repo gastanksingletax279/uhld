@@ -126,6 +126,34 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    @router.get("/secrets/{namespace}/{name}/data")
+    async def get_secret_data(namespace: str, name: str):
+        try:
+            return await plugin._fetch_secret_data(namespace, name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/certificates")
+    async def list_certificates(namespace: str = ""):
+        try:
+            return {"certificates": await plugin._fetch_certificates(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/events")
+    async def list_events(namespace: str = "", warning_only: bool = False):
+        try:
+            return {"events": await plugin._fetch_events(namespace, warning_only)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/overview")
+    async def cluster_overview():
+        try:
+            return await plugin._fetch_overview()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     # ── Actions ───────────────────────────────────────────────────────────────
 
     @router.get("/pods/{namespace}/{pod}/containers")

@@ -256,6 +256,14 @@ export const api = {
         request<{ ok: boolean; kind: string; name: string }>(`${p}/yaml/apply`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ yaml }),
         }),
+      // Overview & events
+      overview:          () => request<K8sOverview>(`${p}/overview`),
+      events:            (namespace = '', warningOnly = false) =>
+        request<{ events: K8sEvent[] }>(`${p}/events${namespace || warningOnly ? `?${new URLSearchParams({ ...(namespace ? { namespace } : {}), ...(warningOnly ? { warning_only: 'true' } : {}) })}` : ''}`),
+      // Secrets data & certificates
+      secretData:        (namespace: string, name: string) =>
+        request<{ type: string; data: Record<string, string> }>(`${p}/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/data`),
+      certificates:      (namespace = '') => request<{ certificates: K8sCertificate[] }>(`${p}/certificates${ns(namespace)}`),
     }
   },
 
@@ -707,6 +715,39 @@ export interface K8sLonghornNode {
   schedulable: boolean
   disk_count: number
   created: string
+}
+
+export interface K8sCertificate {
+  name: string
+  namespace: string
+  secret_name: string
+  dns_names: string[]
+  issuer_ref: string
+  issuer_kind: string
+  ready: boolean
+  not_before: string
+  not_after: string
+  renewal_time: string
+  created: string
+}
+
+export interface K8sEvent {
+  name: string
+  namespace: string
+  type: string
+  reason: string
+  message: string
+  object: string
+  count: number
+  first_time: number
+  last_time: number
+}
+
+export interface K8sOverview {
+  nodes: { name: string; status: string; roles: string[]; cpu: string; memory: string }[]
+  pod_phases: Record<string, number>
+  workloads: Record<string, { total: number; ready: number }>
+  events: K8sEvent[]
 }
 
 // --- UniFi types ---

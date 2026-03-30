@@ -526,6 +526,176 @@ class KubernetesPlugin(PluginBase):
             })
         return result
 
+    async def _fetch_secret_data(self, namespace: str, name: str) -> dict:
+        """Return decoded secret data with key names and base64-decoded values."""
+        import base64
+        v1 = self._core_v1()
+        sec = await self._run(v1.read_namespaced_secret, name, namespace)
+        decoded: dict[str, str] = {}
+        for key, val in (sec.data or {}).items():
+            if val is None:
+                decoded[key] = ""
+            else:
+                try:
+                    decoded[key] = base64.b64decode(val).decode("utf-8", errors="replace")
+                except Exception:
+                    decoded[key] = f"<binary: {len(val)} bytes>"
+        return {"type": sec.type or "", "data": decoded}
+
+    async def _fetch_certificates(self, namespace: str = "") -> list[dict]:
+        """Fetch cert-manager Certificate resources. Returns [] if CRDs not installed."""
+        import base64
+        co = self._custom_objects()
+        try:
+            if namespace:
+                raw = await self._run(
+                    co.list_namespaced_custom_object,
+                    "cert-manager.io", "v1", namespace, "certificates",
+                )
+            else:
+                raw = await self._run(
+                    co.list_cluster_custom_object,
+                    "cert-manager.io", "v1", "certificates",
+                )
+        except Exception:
+            return []
+        result = []
+        for item in raw.get("items", []):
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            status = item.get("status", {})
+            conditions = status.get("conditions", [])
+            ready_cond = next((c for c in conditions if c.get("type") == "Ready"), None)
+            ready = ready_cond.get("status") == "True" if ready_cond else False
+            not_before = status.get("notBefore", "")
+            not_after = status.get("notAfter", "")
+            renewal_time = status.get("renewalTime", "")
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "secret_name": spec.get("secretName", ""),
+                "dns_names": spec.get("dnsNames", []),
+                "issuer_ref": spec.get("issuerRef", {}).get("name", ""),
+                "issuer_kind": spec.get("issuerRef", {}).get("kind", "Issuer"),
+                "ready": ready,
+                "not_before": not_before,
+                "not_after": not_after,
+                "renewal_time": renewal_time,
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_events(self, namespace: str = "", warning_only: bool = False) -> list[dict]:
+        """Fetch cluster events, optionally filtered to Warning type."""
+        v1 = self._core_v1()
+        field_selector = "type=Warning" if warning_only else ""
+        kwargs: dict = {}
+        if field_selector:
+            kwargs["field_selector"] = field_selector
+        if namespace:
+            items = (await self._run(v1.list_namespaced_event, namespace, **kwargs)).items
+        else:
+            items = (await self._run(v1.list_event_for_all_namespaces, **kwargs)).items
+        result = []
+        for ev in items:
+            result.append({
+                "name": ev.metadata.name,
+                "namespace": ev.metadata.namespace or "",
+                "type": ev.type or "",
+                "reason": ev.reason or "",
+                "message": ev.message or "",
+                "object": f"{ev.involved_object.kind}/{ev.involved_object.name}" if ev.involved_object else "",
+                "count": ev.count or 1,
+                "first_time": _ts(ev.first_timestamp),
+                "last_time": _ts(ev.last_timestamp),
+            })
+        # Sort by last_time descending
+        result.sort(key=lambda e: e["last_time"], reverse=True)
+        return result[:200]
+
+    async def _fetch_overview(self) -> dict:
+        """Aggregate cluster overview: node summary, workload counts, recent warning events."""
+        v1 = self._core_v1()
+        apps = self._apps_v1()
+        batch = self._batch_v1()
+        nodes_resp, pods_resp, deploys_resp, sts_resp, ds_resp, events_resp = await asyncio.gather(
+            self._run(v1.list_node),
+            self._run(v1.list_pod_for_all_namespaces),
+            self._run(apps.list_deployment_for_all_namespaces),
+            self._run(apps.list_stateful_set_for_all_namespaces),
+            self._run(apps.list_daemon_set_for_all_namespaces),
+            self._run(v1.list_event_for_all_namespaces, field_selector="type=Warning"),
+            return_exceptions=True,
+        )
+
+        # Nodes
+        nodes: list[dict] = []
+        if not isinstance(nodes_resp, Exception):
+            for n in nodes_resp.items:
+                conds = n.status.conditions or []
+                ready = any(c.type == "Ready" and c.status == "True" for c in conds)
+                _role_prefix = "node-role.kubernetes.io/"
+                roles = sorted(
+                    k[len(_role_prefix):]
+                    for k in (n.metadata.labels or {})
+                    if k.startswith(_role_prefix)
+                ) or ["worker"]
+                allocatable = n.status.allocatable or {}
+                nodes.append({
+                    "name": n.metadata.name,
+                    "status": "Ready" if ready else "NotReady",
+                    "roles": roles,
+                    "cpu": allocatable.get("cpu", ""),
+                    "memory": allocatable.get("memory", ""),
+                })
+
+        # Pods by phase
+        pod_phases: dict[str, int] = {}
+        if not isinstance(pods_resp, Exception):
+            for p in pods_resp.items:
+                phase = p.status.phase or "Unknown"
+                pod_phases[phase] = pod_phases.get(phase, 0) + 1
+
+        # Workload counts
+        def _count(resp, attr: str) -> dict:
+            if isinstance(resp, Exception):
+                return {"total": 0, "ready": 0}
+            items = resp.items
+            total = len(items)
+            ready = 0
+            for obj in items:
+                st = obj.status
+                if hasattr(st, "ready_replicas") and (st.ready_replicas or 0) == (getattr(st, "replicas", 0) or 0) and total > 0:
+                    ready += 1
+            return {"total": total, "ready": ready}
+
+        workloads = {
+            "deployments": _count(deploys_resp, "ready_replicas"),
+            "statefulsets": _count(sts_resp, "ready_replicas"),
+            "daemonsets": _count(ds_resp, "number_ready"),
+        }
+
+        # Recent warning events
+        events: list[dict] = []
+        if not isinstance(events_resp, Exception):
+            for ev in sorted(events_resp.items, key=lambda e: _ts(e.last_timestamp), reverse=True)[:30]:
+                events.append({
+                    "namespace": ev.metadata.namespace or "",
+                    "type": ev.type or "",
+                    "reason": ev.reason or "",
+                    "message": ev.message or "",
+                    "object": f"{ev.involved_object.kind}/{ev.involved_object.name}" if ev.involved_object else "",
+                    "count": ev.count or 1,
+                    "last_time": _ts(ev.last_timestamp),
+                })
+
+        return {
+            "nodes": nodes,
+            "pod_phases": pod_phases,
+            "workloads": workloads,
+            "events": events,
+        }
+
     # ── Networking extras ─────────────────────────────────────────────────────
 
     def _custom_objects(self):
