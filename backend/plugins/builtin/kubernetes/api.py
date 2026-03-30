@@ -186,6 +186,32 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    @router.post("/{kind}/{namespace}/{name}/restart")
+    async def restart_workload(kind: str, namespace: str, name: str):
+        try:
+            return await plugin._restart_workload(kind, namespace, name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.delete("/namespaces/{name}")
+    async def delete_namespace(name: str):
+        try:
+            return await plugin._delete_namespace(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.websocket("/pods/{namespace}/{pod}/logs/stream")
+    async def pod_logs_stream(websocket: WebSocket, namespace: str, pod: str, container: str = ""):
+        try:
+            await plugin._stream_pod_logs(websocket, namespace, pod, container)
+        except Exception as exc:
+            try:
+                await websocket.close(code=1011, reason=str(exc))
+            except Exception:
+                pass
+
     @router.websocket("/pods/{namespace}/{pod}/exec")
     async def pod_exec(websocket: WebSocket, namespace: str, pod: str, container: str = "", command: str = "/bin/sh"):
         await websocket.accept()
@@ -226,6 +252,52 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
     async def list_longhorn_nodes():
         try:
             return {"nodes": await plugin._fetch_longhorn_nodes()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Access control ────────────────────────────────────────────────────────
+
+    @router.get("/serviceaccounts")
+    async def list_serviceaccounts(namespace: str = ""):
+        try:
+            return {"serviceaccounts": await plugin._fetch_serviceaccounts(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/roles")
+    async def list_roles(namespace: str = ""):
+        try:
+            return {"roles": await plugin._fetch_roles(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/clusterroles")
+    async def list_clusterroles():
+        try:
+            return {"clusterroles": await plugin._fetch_clusterroles()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/rolebindings")
+    async def list_rolebindings(namespace: str = ""):
+        try:
+            return {"rolebindings": await plugin._fetch_rolebindings(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/clusterrolebindings")
+    async def list_clusterrolebindings():
+        try:
+            return {"clusterrolebindings": await plugin._fetch_clusterrolebindings()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Helm ──────────────────────────────────────────────────────────────────
+
+    @router.get("/helm/releases")
+    async def list_helm_releases(namespace: str = ""):
+        try:
+            return {"releases": await plugin._fetch_helm_releases(namespace)}
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 

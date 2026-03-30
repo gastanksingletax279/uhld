@@ -264,6 +264,27 @@ export const api = {
       secretData:        (namespace: string, name: string) =>
         request<{ type: string; data: Record<string, string> }>(`${p}/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/data`),
       certificates:      (namespace = '') => request<{ certificates: K8sCertificate[] }>(`${p}/certificates${ns(namespace)}`),
+      // Workload restart
+      restartWorkload:   (kind: string, namespace: string, name: string) =>
+        request<{ ok: boolean }>(`${p}/${encodeURIComponent(kind)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restart`, { method: 'POST' }),
+      // Namespace delete
+      deleteNamespace:   (name: string) =>
+        request<{ ok: boolean }>(`${p}/namespaces/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+      // Realtime log stream WS URL
+      podLogsStreamWsUrl: (namespace: string, pod: string, container = '') => {
+        const base = p.replace(/^\/api/, '')
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        const params = container ? `?container=${encodeURIComponent(container)}` : ''
+        return `${wsProto}://${window.location.host}/api${base}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs/stream${params}`
+      },
+      // Access control
+      serviceaccounts:       (namespace = '') => request<{ serviceaccounts: K8sServiceAccount[] }>(`${p}/serviceaccounts${ns(namespace)}`),
+      roles:                 (namespace = '') => request<{ roles: K8sRole[] }>(`${p}/roles${ns(namespace)}`),
+      clusterroles:          ()               => request<{ clusterroles: K8sClusterRole[] }>(`${p}/clusterroles`),
+      rolebindings:          (namespace = '') => request<{ rolebindings: K8sRoleBinding[] }>(`${p}/rolebindings${ns(namespace)}`),
+      clusterrolebindings:   ()               => request<{ clusterrolebindings: K8sClusterRoleBinding[] }>(`${p}/clusterrolebindings`),
+      // Helm
+      helmReleases:          (namespace = '') => request<{ releases: K8sHelmRelease[] }>(`${p}/helm/releases${ns(namespace)}`),
     }
   },
 
@@ -739,8 +760,8 @@ export interface K8sEvent {
   message: string
   object: string
   count: number
-  first_time: number
-  last_time: number
+  first_time: string | number
+  last_time: string | number
 }
 
 export interface K8sOverview {
@@ -748,6 +769,55 @@ export interface K8sOverview {
   pod_phases: Record<string, number>
   workloads: Record<string, { total: number; ready: number }>
   events: K8sEvent[]
+}
+
+export interface K8sServiceAccount {
+  name: string
+  namespace: string
+  secrets: number
+  created: string
+}
+
+export interface K8sRole {
+  name: string
+  namespace: string
+  rules: number
+  created: string
+}
+
+export interface K8sClusterRole {
+  name: string
+  rules: number
+  aggregation: boolean
+  created: string
+}
+
+export interface K8sRoleBinding {
+  name: string
+  namespace: string
+  role_ref: string
+  subjects: number
+  created: string
+}
+
+export interface K8sClusterRoleBinding {
+  name: string
+  role_ref: string
+  subjects: number
+  created: string
+}
+
+export interface K8sHelmRelease {
+  name: string
+  namespace: string
+  chart: string
+  chart_version: string
+  app_version: string
+  revision: number
+  status: string
+  description: string
+  first_deployed: string
+  last_deployed: string
 }
 
 // --- UniFi types ---

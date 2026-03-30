@@ -7,23 +7,27 @@ import {
   K8sPV, K8sPVC, K8sConfigMap, K8sSecret,
   K8sLonghornVolume, K8sLonghornNode,
   K8sCertificate, K8sEvent, K8sOverview,
+  K8sServiceAccount, K8sRole, K8sClusterRole, K8sRoleBinding, K8sClusterRoleBinding,
+  K8sHelmRelease,
 } from '../../api/client'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 import {
   RefreshCw, Loader2, AlertCircle, Server, Filter,
   RotateCcw, ScrollText, X, ChevronUp, ChevronDown, ChevronsUpDown,
   Plus, Minus, Terminal, FileCode, Check, ShieldCheck, Eye, EyeOff,
-  LayoutDashboard,
+  LayoutDashboard, Trash2, Package, UserCog,
 } from 'lucide-react'
 
 // ── Tab/Group types ────────────────────────────────────────────────────────
 
-type Group = 'cluster' | 'workloads' | 'networking' | 'storage'
+type Group = 'cluster' | 'workloads' | 'networking' | 'storage' | 'access' | 'helm'
 type ClusterTab    = 'overview' | 'nodes' | 'namespaces'
 type WorkloadsTab  = 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs'
 type NetworkingTab = 'services' | 'ingresses' | 'ingressclasses' | 'httproutes'
 type StorageTab    = 'pvs' | 'pvcs' | 'configmaps' | 'secrets' | 'certificates' | 'longhorn'
-type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab
+type AccessTab     = 'serviceaccounts' | 'roles' | 'clusterroles' | 'rolebindings' | 'clusterrolebindings'
+type HelmTab       = 'helmreleases'
+type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab | AccessTab | HelmTab
 
 const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
   cluster:    [{ id: 'overview', label: 'Overview' }, { id: 'nodes', label: 'Nodes' }, { id: 'namespaces', label: 'Namespaces' }],
@@ -41,9 +45,15 @@ const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
     { id: 'configmaps', label: 'ConfigMaps' }, { id: 'secrets', label: 'Secrets' },
     { id: 'certificates', label: 'Certificates' }, { id: 'longhorn', label: 'Longhorn' },
   ],
+  access:     [
+    { id: 'serviceaccounts', label: 'Service Accounts' }, { id: 'roles', label: 'Roles' },
+    { id: 'clusterroles', label: 'ClusterRoles' }, { id: 'rolebindings', label: 'RoleBindings' },
+    { id: 'clusterrolebindings', label: 'ClusterRoleBindings' },
+  ],
+  helm:       [{ id: 'helmreleases', label: 'Releases' }],
 }
 
-const NS_TABS = new Set<Tab>(['pods','deployments','statefulsets','daemonsets','jobs','cronjobs','services','ingresses','httproutes','pvcs','configmaps','secrets','certificates'])
+const NS_TABS = new Set<Tab>(['pods','deployments','statefulsets','daemonsets','jobs','cronjobs','services','ingresses','httproutes','pvcs','configmaps','secrets','certificates','serviceaccounts','roles','rolebindings'])
 
 // ── Generic lazy tab data store ────────────────────────────────────────────
 type TabState<T> = { data: T[]; loading: boolean; loaded: boolean; error: string | null }
@@ -72,6 +82,9 @@ function sorted<T>(data: T[], sort: SortState): T[] {
     return sort.dir === 'asc' ? cmp : -cmp
   })
 }
+
+// ── Confirm modal ──────────────────────────────────────────────────────────
+type ConfirmModal = { title: string; message: string; onConfirm: () => void }
 
 // ── Secret data modal ──────────────────────────────────────────────────────
 type SecretDataModal = {
@@ -125,13 +138,24 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [lhSubTab,      setLhSubTab]      = useState<'volumes'|'nodes'>('volumes')
   const [overview,      setOverview]      = useState<OverviewState>(emptyOverview())
   const [certificates,  setCertificates]  = useState<TabState<K8sCertificate>>(emptyTab())
+  const [svcAccounts,   setSvcAccounts]   = useState<TabState<K8sServiceAccount>>(emptyTab())
+  const [roles,         setRoles]         = useState<TabState<K8sRole>>(emptyTab())
+  const [clusterRoles,  setClusterRoles]  = useState<TabState<K8sClusterRole>>(emptyTab())
+  const [roleBindings,  setRoleBindings]  = useState<TabState<K8sRoleBinding>>(emptyTab())
+  const [crBindings,    setCrBindings]    = useState<TabState<K8sClusterRoleBinding>>(emptyTab())
+  const [helmReleases,  setHelmReleases]  = useState<TabState<K8sHelmRelease>>(emptyTab())
+  const [selectedPods,  setSelectedPods]  = useState<Set<string>>(new Set())
 
   const [actionLoading,   setActionLoading]   = useState<string | null>(null)
   const [actionError,     setActionError]     = useState<string | null>(null)
   const [logsModal,       setLogsModal]       = useState<LogsModal | null>(null)
+  const [logsTail,        setLogsTail]        = useState(false)
+  const logsWsRef  = useRef<WebSocket | null>(null)
+  const logsPreRef = useRef<HTMLPreElement>(null)
   const [shellModal,      setShellModal]      = useState<ShellModal | null>(null)
   const [yamlModal,       setYamlModal]       = useState<YamlModal | null>(null)
   const [secretDataModal, setSecretDataModal] = useState<SecretDataModal | null>(null)
+  const [confirmModal,    setConfirmModal]    = useState<ConfirmModal | null>(null)
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   async function load<T>(setter: React.Dispatch<React.SetStateAction<TabState<T>>>, fetcher: () => Promise<unknown>, key: string) {
@@ -175,14 +199,51 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
         if (!skip(lhVolumes)) load(setLhVolumes, () => k8s.longhornVolumes(), 'volumes')
         if (!skip(lhNodes))   load(setLhNodes,   () => k8s.longhornNodes(), 'nodes')
         break
+      case 'serviceaccounts':       load(setSvcAccounts,  () => k8s.serviceaccounts(ns), 'serviceaccounts'); break
+      case 'roles':                 load(setRoles,        () => k8s.roles(ns), 'roles'); break
+      case 'clusterroles':          if (!skip(clusterRoles))  load(setClusterRoles, () => k8s.clusterroles(), 'clusterroles'); break
+      case 'rolebindings':          load(setRoleBindings, () => k8s.rolebindings(ns), 'rolebindings'); break
+      case 'clusterrolebindings':   if (!skip(crBindings))    load(setCrBindings, () => k8s.clusterrolebindings(), 'clusterrolebindings'); break
+      case 'helmreleases':          load(setHelmReleases, () => k8s.helmReleases(ns), 'releases'); break
     }
   }, [nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadTab('overview') }, [])
+  // Reset all cached data when the cluster instance changes
+  useEffect(() => {
+    setOverview(emptyOverview())
+    setNodes(emptyTab()); setNamespaces(emptyTab())
+    setPods(emptyTab()); setDeployments(emptyTab()); setStatefulsets(emptyTab())
+    setDaemonsets(emptyTab()); setJobs(emptyTab()); setCronjobs(emptyTab())
+    setServices(emptyTab()); setIngresses(emptyTab()); setIngressclasses(emptyTab())
+    setHttproutes(emptyTab()); setPvs(emptyTab()); setPvcs(emptyTab())
+    setConfigmaps(emptyTab()); setSecrets(emptyTab()); setCertificates(emptyTab())
+    setLhVolumes(emptyTab()); setLhNodes(emptyTab())
+    setSvcAccounts(emptyTab()); setRoles(emptyTab()); setClusterRoles(emptyTab())
+    setRoleBindings(emptyTab()); setCrBindings(emptyTab()); setHelmReleases(emptyTab())
+    setSelectedPods(new Set())
+    loadTab(tab)
+  }, [instanceId])  // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const s = getTabState(tab)
     if (!s.loaded && !s.loading) loadTab(tab)
   }, [tab])
+
+  // ── Realtime log streaming ────────────────────────────────────────────────
+  useEffect(() => {
+    if (logsWsRef.current) { logsWsRef.current.close(); logsWsRef.current = null }
+    if (!logsTail || !logsModal) return
+    const ws = new WebSocket(k8s.podLogsStreamWsUrl(logsModal.namespace, logsModal.pod, logsModal.container))
+    logsWsRef.current = ws
+    ws.onmessage = (e) => {
+      setLogsModal((m) => m ? { ...m, logs: m.logs + (e.data as string) } : null)
+      requestAnimationFrame(() => {
+        if (logsPreRef.current) logsPreRef.current.scrollTop = logsPreRef.current.scrollHeight
+      })
+    }
+    ws.onerror = () => setLogsModal((m) => m ? { ...m, error: 'Log stream disconnected' } : null)
+    return () => { ws.close(); logsWsRef.current = null }
+  }, [logsTail, logsModal?.namespace, logsModal?.pod, logsModal?.container])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyNsFilter(ns: string) {
     setNsFilter(ns)
@@ -202,11 +263,27 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       pvs: pvs as TabState<unknown>, pvcs: pvcs as TabState<unknown>,
       configmaps: configmaps as TabState<unknown>, secrets: secrets as TabState<unknown>,
       certificates: certificates as TabState<unknown>, longhorn: lhVolumes as TabState<unknown>,
+      serviceaccounts: svcAccounts as TabState<unknown>, roles: roles as TabState<unknown>,
+      clusterroles: clusterRoles as TabState<unknown>, rolebindings: roleBindings as TabState<unknown>,
+      clusterrolebindings: crBindings as TabState<unknown>, helmreleases: helmReleases as TabState<unknown>,
     }
     return map[t]
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
+  async function restartWorkload(kind: string, namespace: string, name: string) {
+    const key = `restart-workload:${namespace}/${name}`
+    setActionLoading(key); setActionError(null)
+    try {
+      await k8s.restartWorkload(kind, namespace, name)
+      const tabMap: Record<string, Tab> = { deployment: 'deployments', statefulset: 'statefulsets', daemonset: 'daemonsets' }
+      const t = tabMap[kind.toLowerCase()]
+      if (t) setTimeout(() => loadTab(t, nsFilter, true), 1500)
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Restart failed')
+    } finally { setActionLoading(null) }
+  }
+
   async function restartPod(namespace: string, pod: string) {
     const key = `restart:${namespace}/${pod}`
     setActionLoading(key); setActionError(null)
@@ -230,6 +307,8 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   }
 
   async function openLogs(namespace: string, pod: string) {
+    setLogsTail(false)
+    logsWsRef.current?.close()
     setLogsModal({ namespace, pod, containers: [], container: '', logs: '', loading: true, error: null })
     try {
       const { containers } = await k8s.podContainers(namespace, pod)
@@ -243,6 +322,8 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
 
   async function switchLogContainer(container: string) {
     if (!logsModal) return
+    setLogsTail(false)
+    logsWsRef.current?.close()
     setLogsModal((m) => m ? { ...m, container, logs: '', loading: true, error: null } : null)
     try {
       const { logs } = await k8s.podLogs(logsModal.namespace, logsModal.pod, container)
@@ -250,6 +331,34 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     } catch (e: unknown) {
       setLogsModal((m) => m ? { ...m, loading: false, error: e instanceof Error ? e.message : 'Failed' } : null)
     }
+  }
+
+  async function bulkRestartPods(podList: K8sPod[]) {
+    setActionLoading('bulk-restart'); setActionError(null)
+    try {
+      await Promise.all(podList.map((p) => k8s.restartPod(p.namespace, p.name)))
+      setSelectedPods(new Set())
+      setTimeout(() => loadTab('pods', nsFilter, true), 1500)
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Bulk restart failed')
+    } finally { setActionLoading(null) }
+  }
+
+  function promptDeleteNamespace(name: string) {
+    setConfirmModal({
+      title: `Delete namespace "${name}"?`,
+      message: `This will delete the namespace and ALL resources inside it (pods, services, deployments, etc.). This action cannot be undone.`,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setActionLoading(`delete-ns:${name}`); setActionError(null)
+        try {
+          await k8s.deleteNamespace(name)
+          loadTab('namespaces', '', true)
+        } catch (e: unknown) {
+          setActionError(e instanceof Error ? e.message : 'Delete failed')
+        } finally { setActionLoading(null) }
+      },
+    })
   }
 
   async function openShell(namespace: string, pod: string) {
@@ -318,6 +427,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const GROUPS: { id: Group; label: string }[] = [
     { id: 'cluster', label: 'Cluster' }, { id: 'workloads', label: 'Workloads' },
     { id: 'networking', label: 'Networking' }, { id: 'storage', label: 'Storage' },
+    { id: 'access', label: 'Access Control' }, { id: 'helm', label: 'Helm' },
   ]
 
   return (
@@ -369,11 +479,11 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {/* Content */}
       {tab === 'overview'      && <OverviewPanel      state={overview} onRefresh={() => { setOverview(emptyOverview()); loadTab('overview', '', true) }} />}
       {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} />}
-      {tab === 'namespaces'    && <NamespacesTable    state={namespaces}    />}
-      {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} />}
-      {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} />}
-      {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} />}
-      {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} />}
+      {tab === 'namespaces'    && <NamespacesTable    state={namespaces}    actionLoading={actionLoading} onDelete={promptDeleteNamespace} />}
+      {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} selected={selectedPods} onSelect={setSelectedPods} onBulkRestart={bulkRestartPods} />}
+      {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onRestart={(d) => restartWorkload('deployment', d.namespace, d.name)} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} />}
+      {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  actionLoading={actionLoading} onRestart={(s) => restartWorkload('statefulset', s.namespace, s.name)} onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} />}
+      {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    actionLoading={actionLoading} onRestart={(d) => restartWorkload('daemonset', d.namespace, d.name)} onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} />}
       {tab === 'jobs'          && <JobsTable          state={jobs}          />}
       {tab === 'cronjobs'      && <CronJobsTable      state={cronjobs}      />}
       {tab === 'services'      && <ServicesTable      state={services}      onYaml={(s) => openYaml('service', s.name, s.namespace)} />}
@@ -385,6 +495,14 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {tab === 'configmaps'    && <ConfigMapsTable    state={configmaps}    onYaml={(c) => openYaml('configmap', c.name, c.namespace)} />}
       {tab === 'secrets'       && <SecretsTable       state={secrets}       onYaml={(s) => openYaml('secret', s.name, s.namespace)} onReveal={(s) => openSecretData(s.namespace, s.name)} />}
       {tab === 'certificates'  && <CertificatesTable  state={certificates}  />}
+      {/* Access control */}
+      {tab === 'serviceaccounts'      && <ServiceAccountsTable  state={svcAccounts}  />}
+      {tab === 'roles'                && <RolesTable             state={roles}        />}
+      {tab === 'clusterroles'         && <ClusterRolesTable      state={clusterRoles} />}
+      {tab === 'rolebindings'         && <RoleBindingsTable      state={roleBindings} />}
+      {tab === 'clusterrolebindings'  && <ClusterRoleBindingsTable state={crBindings} />}
+      {/* Helm */}
+      {tab === 'helmreleases'         && <HelmReleasesTable      state={helmReleases} />}
       {tab === 'longhorn'      && (
         <LonghornView
           volumes={lhVolumes} nodes={lhNodes}
@@ -396,17 +514,29 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {/* Logs modal */}
       {logsModal && (
         <Modal title={logsModal.pod} subtitle={logsModal.namespace} icon={<ScrollText className="w-4 h-4 text-muted" />}
-          onClose={() => setLogsModal(null)}
-          headerExtra={logsModal.containers.length > 1 ? (
-            <select className="input text-xs py-0.5 px-2 h-auto" value={logsModal.container} onChange={(e) => switchLogContainer(e.target.value)}>
-              {logsModal.containers.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          ) : logsModal.container ? <span className="text-xs text-muted font-mono">{logsModal.container}</span> : undefined}
-          hint="last 200 lines"
+          onClose={() => { setLogsTail(false); logsWsRef.current?.close(); setLogsModal(null) }}
+          headerExtra={
+            <div className="flex items-center gap-2">
+              {logsModal.containers.length > 1 ? (
+                <select className="input text-xs py-0.5 px-2 h-auto" value={logsModal.container} onChange={(e) => switchLogContainer(e.target.value)}>
+                  {logsModal.containers.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              ) : logsModal.container ? <span className="text-xs text-muted font-mono">{logsModal.container}</span> : null}
+              <button
+                onClick={() => setLogsTail((t) => !t)}
+                title={logsTail ? 'Stop live tail' : 'Start live tail'}
+                className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${logsTail ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-surface-3 text-muted hover:text-gray-300'}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${logsTail ? 'bg-green-400 animate-pulse' : 'bg-muted'}`} />
+                {logsTail ? 'Live' : 'Tail'}
+              </button>
+            </div>
+          }
+          hint={logsTail ? 'streaming live…' : 'last 200 lines'}
         >
           {logsModal.loading ? <ModalLoading label="Loading logs…" /> :
            logsModal.error  ? <ErrorBanner msg={logsModal.error} /> :
-           <pre className="text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all leading-relaxed">{logsModal.logs || '(no output)'}</pre>}
+           <pre ref={logsPreRef} className="text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all leading-relaxed overflow-y-auto max-h-full">{logsModal.logs || '(no output)'}</pre>}
         </Modal>
       )}
 
@@ -433,6 +563,25 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
             </div>
           )}
         </Modal>
+      )}
+
+      {/* Confirm modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-surface-2 border border-surface-4 rounded-lg shadow-xl w-full max-w-md mx-4 p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold text-white text-sm">{confirmModal.title}</div>
+                <div className="text-xs text-muted mt-1">{confirmModal.message}</div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmModal(null)} className="btn-ghost text-xs">Cancel</button>
+              <button onClick={confirmModal.onConfirm} className="bg-danger hover:bg-danger/80 text-white text-xs px-3 py-1.5 rounded transition-colors">Confirm Delete</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Shell modal */}
@@ -759,13 +908,13 @@ function NodesTable({ state, onYaml }: { state: TabState<K8sNode>; onYaml: (n: K
         <tr key={n.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
           <td className="px-3 py-2 font-medium text-gray-200">{n.name}</td>
           <td className="px-3 py-2">{n.status === 'Ready' ? <span className="badge-ok">Ready</span> : <span className="badge-error">NotReady</span>}</td>
-          <td className="px-3 py-2">
-            <div className="flex flex-wrap gap-1">{n.roles.map((r) => <span key={r} className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300">{r}</span>)}</div>
-          </td>
           <td className="px-3 py-2 font-mono text-muted">{n.version}</td>
           <td className="px-3 py-2 font-mono text-muted">{n.internal_ip || '—'}</td>
           <td className="px-3 py-2 text-muted truncate max-w-[160px]" title={n.os_image}>{n.os_image || '—'}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(n.created)}</td>
+          <td className="px-3 py-2">
+            <div className="flex flex-wrap gap-1">{n.roles.map((r) => <span key={r} className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300">{r}</span>)}</div>
+          </td>
           <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(n)} /></td>
         </tr>
       ))}
@@ -773,58 +922,23 @@ function NodesTable({ state, onYaml }: { state: TabState<K8sNode>; onYaml: (n: K
   )
 }
 
-function NamespacesTable({ state }: { state: TabState<K8sNamespace> }) {
+function NamespacesTable({ state, actionLoading, onDelete }: {
+  state: TabState<K8sNamespace>; actionLoading: string | null
+  onDelete: (name: string) => void
+}) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'status', label: 'Status' }, { key: 'created', label: 'Age' }]
   return (
-    <DataTable state={state} emptyMsg="No namespaces found." cols={cols} sort={sort} onSort={toggle}>
-      {sorted(state.data, sort).map((ns) => (
-        <tr key={ns.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{ns.name}</td>
-          <td className="px-3 py-2">{ns.status === 'Active' ? <span className="badge-ok">Active</span> : <span className="badge-muted">{ns.status}</span>}</td>
-          <td className="px-3 py-2 text-muted">{fmtAge(ns.created)}</td>
-        </tr>
-      ))}
-    </DataTable>
-  )
-}
-
-function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml }: {
-  state: TabState<K8sPod>; actionLoading: string | null
-  onRestart: (ns: string, pod: string) => void
-  onLogs:    (ns: string, pod: string) => void
-  onShell:   (ns: string, pod: string) => void
-  onYaml:    (p: K8sPod) => void
-}) {
-  const [sort, toggle] = useSort()
-  const cols: ColDef[] = [
-    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
-    { key: 'ready', label: 'Ready' }, { key: 'status', label: 'Status' },
-    { key: 'restarts', label: 'Restarts' }, { key: 'node', label: 'Node' },
-    { key: 'ip', label: 'IP' }, { key: 'created', label: 'Age' },
-  ]
-  return (
-    <DataTable state={state} emptyMsg="No pods found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
-      {sorted(state.data, sort).map((p) => {
-        const key = `restart:${p.namespace}/${p.name}`
-        const isRunning = p.status === 'Running'
+    <DataTable state={state} emptyMsg="No namespaces found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((ns) => {
+        const delKey = `delete-ns:${ns.name}`
         return (
-          <tr key={`${p.namespace}/${p.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-            <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={p.name}>{p.name}</td>
-            <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
-            <td className="px-3 py-2 font-mono text-muted">{p.ready}</td>
-            <td className="px-3 py-2"><PodStatusBadge status={p.status} /></td>
-            <td className="px-3 py-2 text-right font-mono"><span className={p.restarts > 0 ? 'text-warning' : 'text-muted'}>{p.restarts}</span></td>
-            <td className="px-3 py-2 text-muted max-w-[140px] truncate" title={p.node}>{p.node || '—'}</td>
-            <td className="px-3 py-2 font-mono text-muted">{p.ip || '—'}</td>
-            <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+          <tr key={ns.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+            <td className="px-3 py-2 font-medium text-gray-200">{ns.name}</td>
+            <td className="px-3 py-2">{ns.status === 'Active' ? <span className="badge-ok">Active</span> : <span className="badge-muted">{ns.status}</span>}</td>
+            <td className="px-3 py-2 text-muted">{fmtAge(ns.created)}</td>
             <td className="px-3 py-2">
-              <div className="flex items-center gap-1">
-                <ActionBtn title="View Logs"     onClick={() => onLogs(p.namespace, p.name)}    loading={false}                icon={<ScrollText className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
-                {isRunning && <ActionBtn title="Shell"  onClick={() => onShell(p.namespace, p.name)}   loading={false}                icon={<Terminal   className="w-3.5 h-3.5" />} hoverColor="hover:text-green-400" />}
-                <ActionBtn title="Restart Pod"   onClick={() => onRestart(p.namespace, p.name)} loading={actionLoading === key} icon={<RotateCcw  className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
-                <YamlBtn onClick={() => onYaml(p)} />
-              </div>
+              <ActionBtn title="Delete namespace" onClick={() => onDelete(ns.name)} loading={actionLoading === delKey} icon={<Trash2 className="w-3.5 h-3.5" />} hoverColor="hover:text-danger" />
             </td>
           </tr>
         )
@@ -833,9 +947,88 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml }:
   )
 }
 
-function DeploymentsTable({ state, actionLoading, onScale, onYaml }: {
+function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, selected, onSelect, onBulkRestart }: {
+  state: TabState<K8sPod>; actionLoading: string | null
+  onRestart: (ns: string, pod: string) => void
+  onLogs:    (ns: string, pod: string) => void
+  onShell:   (ns: string, pod: string) => void
+  onYaml:    (p: K8sPod) => void
+  selected:  Set<string>
+  onSelect:  (s: Set<string>) => void
+  onBulkRestart: (pods: K8sPod[]) => void
+}) {
+  const [sort, toggle] = useSort()
+  const sortedData = sorted(state.data, sort)
+  const allKeys = sortedData.map((p) => `${p.namespace}/${p.name}`)
+  const allSelected = allKeys.length > 0 && allKeys.every((k) => selected.has(k))
+
+  function toggleAll() {
+    if (allSelected) onSelect(new Set())
+    else onSelect(new Set(allKeys))
+  }
+
+  function toggleOne(key: string) {
+    const next = new Set(selected)
+    next.has(key) ? next.delete(key) : next.add(key)
+    onSelect(next)
+  }
+
+  const selectedPodObjs = sortedData.filter((p) => selected.has(`${p.namespace}/${p.name}`))
+
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'ready', label: 'Ready' }, { key: 'status', label: 'Status' },
+    { key: 'restarts', label: 'Restarts' }, { key: 'node', label: 'Node' },
+    { key: 'ip', label: 'IP' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <div className="space-y-2">
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded bg-accent/10 border border-accent/30 text-sm">
+          <span className="text-accent font-medium">{selected.size} pod{selected.size > 1 ? 's' : ''} selected</span>
+          <button onClick={() => onBulkRestart(selectedPodObjs)} disabled={actionLoading === 'bulk-restart'} className="flex items-center gap-1 text-xs bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 px-2 py-1 rounded transition-colors disabled:opacity-50">
+            {actionLoading === 'bulk-restart' ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}Restart Selected
+          </button>
+          <button onClick={() => onSelect(new Set())} className="text-xs text-muted hover:text-gray-300 ml-auto">Clear</button>
+        </div>
+      )}
+      <DataTable state={state} emptyMsg="No pods found." cols={cols} sort={sort} onSort={toggle} extraCols={['', '']}
+        selectHeader={<th className="px-3 py-2 w-8"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" /></th>}>
+        {sortedData.map((p) => {
+          const key = `restart:${p.namespace}/${p.name}`
+          const podKey = `${p.namespace}/${p.name}`
+          const isRunning = p.status === 'Running'
+          return (
+            <tr key={podKey} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+              <td className="px-3 py-2 w-8"><input type="checkbox" checked={selected.has(podKey)} onChange={() => toggleOne(podKey)} className="cursor-pointer" /></td>
+              <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={p.name}>{p.name}</td>
+              <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
+              <td className="px-3 py-2 font-mono text-muted">{p.ready}</td>
+              <td className="px-3 py-2"><PodStatusBadge status={p.status} /></td>
+              <td className="px-3 py-2 text-right font-mono"><span className={p.restarts > 0 ? 'text-warning' : 'text-muted'}>{p.restarts}</span></td>
+              <td className="px-3 py-2 text-muted max-w-[140px] truncate" title={p.node}>{p.node || '—'}</td>
+              <td className="px-3 py-2 font-mono text-muted">{p.ip || '—'}</td>
+              <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-1">
+                  <ActionBtn title="View Logs"   onClick={() => onLogs(p.namespace, p.name)}    loading={false}                icon={<ScrollText className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
+                  {isRunning && <ActionBtn title="Shell" onClick={() => onShell(p.namespace, p.name)} loading={false} icon={<Terminal className="w-3.5 h-3.5" />} hoverColor="hover:text-green-400" />}
+                  <ActionBtn title="Restart Pod" onClick={() => onRestart(p.namespace, p.name)} loading={actionLoading === key} icon={<RotateCcw  className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
+                  <YamlBtn onClick={() => onYaml(p)} />
+                </div>
+              </td>
+            </tr>
+          )
+        })}
+      </DataTable>
+    </div>
+  )
+}
+
+function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml }: {
   state: TabState<K8sDeployment>; actionLoading: string | null
   onScale: (ns: string, name: string, current: number, delta: number) => void
+  onRestart: (d: K8sDeployment) => void
   onYaml: (d: K8sDeployment) => void
 }) {
   const [sort, toggle] = useSort()
@@ -848,8 +1041,9 @@ function DeploymentsTable({ state, actionLoading, onScale, onYaml }: {
     <DataTable state={state} emptyMsg="No deployments found." cols={cols} sort={sort} onSort={toggle} extraCols={['Scale', '']}>
       {sorted(state.data, sort).map((d) => {
         const [ready, total] = d.ready.split('/').map(Number)
-        const key = `scale:${d.namespace}/${d.name}`
-        const busy = actionLoading === key
+        const scaleKey = `scale:${d.namespace}/${d.name}`
+        const restartKey = `restart-workload:${d.namespace}/${d.name}`
+        const scaleBusy = actionLoading === scaleKey
         return (
           <tr key={`${d.namespace}/${d.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
             <td className="px-3 py-2 font-medium text-gray-200">{d.name}</td>
@@ -860,16 +1054,17 @@ function DeploymentsTable({ state, actionLoading, onScale, onYaml }: {
             <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(d.created)}</td>
             <td className="px-3 py-2">
               <div className="flex items-center gap-1">
-                <button disabled={busy || total <= 0} title="Scale down" onClick={() => onScale(d.namespace, d.name, total, -1)} className="text-muted hover:text-danger transition-colors p-0.5 disabled:opacity-40">
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Minus className="w-3.5 h-3.5" />}
+                <button disabled={scaleBusy || total <= 0} title="Scale down" onClick={() => onScale(d.namespace, d.name, total, -1)} className="text-muted hover:text-danger transition-colors p-0.5 disabled:opacity-40">
+                  {scaleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Minus className="w-3.5 h-3.5" />}
                 </button>
                 <span className="font-mono text-xs text-gray-300 w-4 text-center">{total}</span>
-                <button disabled={busy} title="Scale up" onClick={() => onScale(d.namespace, d.name, total, 1)} className="text-muted hover:text-green-400 transition-colors p-0.5 disabled:opacity-40">
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                <button disabled={scaleBusy} title="Scale up" onClick={() => onScale(d.namespace, d.name, total, 1)} className="text-muted hover:text-green-400 transition-colors p-0.5 disabled:opacity-40">
+                  {scaleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                 </button>
+                <ActionBtn title="Rollout Restart" onClick={() => onRestart(d)} loading={actionLoading === restartKey} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
+                <YamlBtn onClick={() => onYaml(d)} />
               </div>
             </td>
-            <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(d)} /></td>
           </tr>
         )
       })}
@@ -877,7 +1072,11 @@ function DeploymentsTable({ state, actionLoading, onScale, onYaml }: {
   )
 }
 
-function StatefulSetsTable({ state, onYaml }: { state: TabState<K8sStatefulSet>; onYaml: (s: K8sStatefulSet) => void }) {
+function StatefulSetsTable({ state, actionLoading, onRestart, onYaml }: {
+  state: TabState<K8sStatefulSet>; actionLoading: string | null
+  onRestart: (s: K8sStatefulSet) => void
+  onYaml: (s: K8sStatefulSet) => void
+}) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -887,6 +1086,7 @@ function StatefulSetsTable({ state, onYaml }: { state: TabState<K8sStatefulSet>;
     <DataTable state={state} emptyMsg="No StatefulSets found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((s) => {
         const [ready, total] = s.ready.split('/').map(Number)
+        const restartKey = `restart-workload:${s.namespace}/${s.name}`
         return (
           <tr key={`${s.namespace}/${s.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
             <td className="px-3 py-2 font-medium text-gray-200">{s.name}</td>
@@ -894,7 +1094,12 @@ function StatefulSetsTable({ state, onYaml }: { state: TabState<K8sStatefulSet>;
             <td className="px-3 py-2 font-mono"><span className={ready === total && total > 0 ? 'text-green-400' : 'text-warning'}>{s.ready}</span></td>
             <td className="px-3 py-2 font-mono text-muted">{s.current_revision || '—'}</td>
             <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(s.created)}</td>
-            <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(s)} /></td>
+            <td className="px-3 py-2">
+              <div className="flex items-center gap-1">
+                <ActionBtn title="Rollout Restart" onClick={() => onRestart(s)} loading={actionLoading === restartKey} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
+                <YamlBtn onClick={() => onYaml(s)} />
+              </div>
+            </td>
           </tr>
         )
       })}
@@ -902,7 +1107,11 @@ function StatefulSetsTable({ state, onYaml }: { state: TabState<K8sStatefulSet>;
   )
 }
 
-function DaemonSetsTable({ state, onYaml }: { state: TabState<K8sDaemonSet>; onYaml: (d: K8sDaemonSet) => void }) {
+function DaemonSetsTable({ state, actionLoading, onRestart, onYaml }: {
+  state: TabState<K8sDaemonSet>; actionLoading: string | null
+  onRestart: (d: K8sDaemonSet) => void
+  onYaml: (d: K8sDaemonSet) => void
+}) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -912,19 +1121,27 @@ function DaemonSetsTable({ state, onYaml }: { state: TabState<K8sDaemonSet>; onY
   ]
   return (
     <DataTable state={state} emptyMsg="No DaemonSets found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
-      {sorted(state.data, sort).map((d) => (
-        <tr key={`${d.namespace}/${d.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{d.name}</td>
-          <td className="px-3 py-2"><NsBadge ns={d.namespace} /></td>
-          <td className="px-3 py-2 font-mono text-muted text-center">{d.desired}</td>
-          <td className="px-3 py-2 font-mono text-muted text-center">{d.current}</td>
-          <td className="px-3 py-2 font-mono text-center"><span className={d.ready === d.desired ? 'text-green-400' : 'text-warning'}>{d.ready}</span></td>
-          <td className="px-3 py-2 font-mono text-muted text-center">{d.up_to_date}</td>
-          <td className="px-3 py-2 font-mono text-muted text-center">{d.available}</td>
-          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(d.created)}</td>
-          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(d)} /></td>
-        </tr>
-      ))}
+      {sorted(state.data, sort).map((d) => {
+        const restartKey = `restart-workload:${d.namespace}/${d.name}`
+        return (
+          <tr key={`${d.namespace}/${d.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+            <td className="px-3 py-2 font-medium text-gray-200">{d.name}</td>
+            <td className="px-3 py-2"><NsBadge ns={d.namespace} /></td>
+            <td className="px-3 py-2 font-mono text-muted text-center">{d.desired}</td>
+            <td className="px-3 py-2 font-mono text-muted text-center">{d.current}</td>
+            <td className="px-3 py-2 font-mono text-center"><span className={d.ready === d.desired ? 'text-green-400' : 'text-warning'}>{d.ready}</span></td>
+            <td className="px-3 py-2 font-mono text-muted text-center">{d.up_to_date}</td>
+            <td className="px-3 py-2 font-mono text-muted text-center">{d.available}</td>
+            <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(d.created)}</td>
+            <td className="px-3 py-2">
+              <div className="flex items-center gap-1">
+                <ActionBtn title="Rollout Restart" onClick={() => onRestart(d)} loading={actionLoading === restartKey} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
+                <YamlBtn onClick={() => onYaml(d)} />
+              </div>
+            </td>
+          </tr>
+        )
+      })}
     </DataTable>
   )
 }
@@ -1177,10 +1394,10 @@ function SecretsTable({ state, onYaml, onReveal }: { state: TabState<K8sSecret>;
 
 type ColDef = { key: string; label: string }
 
-function DataTable<T>({ state, cols, emptyMsg, sort, onSort, extraCols = [], children }: {
+function DataTable<T>({ state, cols, emptyMsg, sort, onSort, extraCols = [], selectHeader, children }: {
   state: TabState<T>; cols: ColDef[]; emptyMsg: string
   sort: SortState; onSort: (col: string) => void
-  extraCols?: string[]; children: React.ReactNode
+  extraCols?: string[]; selectHeader?: React.ReactNode; children: React.ReactNode
 }) {
   if (state.error) return <ErrorBanner msg={state.error} />
   if (state.loading && !state.loaded) return <LoadingSpinner />
@@ -1191,6 +1408,7 @@ function DataTable<T>({ state, cols, emptyMsg, sort, onSort, extraCols = [], chi
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-surface-4 text-muted">
+            {selectHeader}
             {cols.map((c) => (
               <th key={c.key} className="px-3 py-2 text-left font-medium whitespace-nowrap">
                 <button onClick={() => onSort(c.key)} className="flex items-center gap-1 hover:text-gray-300 transition-colors">
@@ -1521,4 +1739,144 @@ function SecretDataView({ data }: { data: Record<string, string> }) {
       ))}
     </div>
   )
+}
+
+// ── Access Control Tables ──────────────────────────────────────────────────
+
+function ServiceAccountsTable({ state }: { state: TabState<K8sServiceAccount> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'secrets', label: 'Secrets' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No service accounts found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((sa) => (
+        <tr key={`${sa.namespace}/${sa.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{sa.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={sa.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{sa.secrets}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(sa.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function RolesTable({ state }: { state: TabState<K8sRole> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'rules', label: 'Rules' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No roles found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((r) => (
+        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{r.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={r.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{r.rules}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(r.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function ClusterRolesTable({ state }: { state: TabState<K8sClusterRole> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'rules', label: 'Rules' },
+    { key: 'aggregation', label: 'Aggregation' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No ClusterRoles found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((cr) => (
+        <tr key={cr.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{cr.name}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{cr.rules}</td>
+          <td className="px-3 py-2 text-center">{cr.aggregation ? <span className="badge-ok">Yes</span> : <span className="badge-muted">No</span>}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(cr.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function RoleBindingsTable({ state }: { state: TabState<K8sRoleBinding> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'role_ref', label: 'Role' }, { key: 'subjects', label: 'Subjects' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No RoleBindings found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((rb) => (
+        <tr key={`${rb.namespace}/${rb.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{rb.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={rb.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{rb.role_ref}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{rb.subjects}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(rb.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function ClusterRoleBindingsTable({ state }: { state: TabState<K8sClusterRoleBinding> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'role_ref', label: 'ClusterRole' },
+    { key: 'subjects', label: 'Subjects' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No ClusterRoleBindings found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((crb) => (
+        <tr key={crb.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{crb.name}</td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{crb.role_ref}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{crb.subjects}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(crb.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── Helm Releases Table ────────────────────────────────────────────────────
+
+function HelmReleasesTable({ state }: { state: TabState<K8sHelmRelease> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'chart', label: 'Chart' }, { key: 'chart_version', label: 'Version' },
+    { key: 'app_version', label: 'App Version' }, { key: 'revision', label: 'Rev' },
+    { key: 'status', label: 'Status' }, { key: 'last_deployed', label: 'Deployed' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No Helm releases found — Helm may not be used in this cluster." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((r) => (
+        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{r.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={r.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted">{r.chart}</td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{r.chart_version || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{r.app_version || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{r.revision}</td>
+          <td className="px-3 py-2"><HelmStatusBadge status={r.status} /></td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap" title={r.last_deployed}>{fmtAge(r.last_deployed)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function HelmStatusBadge({ status }: { status: string }) {
+  const cls = status === 'deployed' ? 'badge-ok'
+    : status === 'failed' ? 'badge-error'
+    : status === 'pending-install' || status === 'pending-upgrade' || status === 'pending-rollback' ? 'bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-medium'
+    : status === 'uninstalling' ? 'bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded text-[10px] font-medium'
+    : 'badge-muted'
+  return <span className={cls}>{status}</span>
 }

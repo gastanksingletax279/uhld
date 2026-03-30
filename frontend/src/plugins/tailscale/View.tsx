@@ -367,6 +367,21 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
         ) : (
           <div className="space-y-2">
             {deviceActionError && <ErrorBanner msg={deviceActionError} />}
+            {/* Updates available banner */}
+            {(() => {
+              const needsUpdate = devices.filter((d) => d.updateAvailable)
+              if (needsUpdate.length === 0) return null
+              return (
+                <div className="flex items-start gap-2 p-3 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-xs">
+                  <ArrowUpCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium">{needsUpdate.length} device{needsUpdate.length > 1 ? 's have' : ' has'} a Tailscale client update available: </span>
+                    <span className="text-yellow-200/70">{needsUpdate.map((d) => d.name ? d.name.split('.')[0] : d.hostname).join(', ')}</span>
+                    <div className="mt-1 text-yellow-300/60">Updates must be applied directly on each device — the Tailscale API does not support remote client upgrades.</div>
+                  </div>
+                </div>
+              )
+            })()}
             <div className="card overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -396,6 +411,10 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
                 </tbody>
               </table>
             </div>
+            {/* Subnet Routers section */}
+            {devices.some((d) => (d.advertisedRoutes ?? []).some((r) => !EXIT_ROUTES.has(r))) && (
+              <SubnetRoutersPanel devices={devices} />
+            )}
           </div>
         )
       )}
@@ -912,9 +931,17 @@ function DeviceRow({ device, actionLoading, onAction, onMenuAction }: {
             <span className="px-1 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 whitespace-nowrap">exit node</span>
           )}
           {subnets.length > 0 && (
-            <span className="px-1 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300 whitespace-nowrap" title={subnets.join(', ')}>
-              {subnets.length} subnet{subnets.length > 1 ? 's' : ''}
-            </span>
+            <div className="relative group">
+              <span className="px-1 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300 whitespace-nowrap cursor-default">
+                {subnets.length} subnet{subnets.length > 1 ? 's' : ''}
+              </span>
+              <div className="absolute left-0 top-5 z-50 hidden group-hover:block bg-surface-2 border border-surface-4 rounded shadow-lg p-2 min-w-[160px]">
+                <div className="text-[10px] text-muted mb-1 font-medium uppercase tracking-wide">Advertised Subnets</div>
+                {subnets.map((s) => (
+                  <div key={s} className="font-mono text-[11px] text-gray-300 py-0.5">{s}</div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </td>
@@ -1104,6 +1131,65 @@ function KeyRow({ k }: { k: TailscaleKey }) {
         }
       </td>
     </tr>
+  )
+}
+
+// ── Subnet Routers Panel ──────────────────────────────────────────────────────
+
+function SubnetRoutersPanel({ devices }: { devices: TailscaleDevice[] }) {
+  // Build subnet → advertisers map
+  const subnetMap = new Map<string, TailscaleDevice[]>()
+  for (const device of devices) {
+    for (const route of (device.advertisedRoutes ?? []).filter((r) => !EXIT_ROUTES.has(r))) {
+      if (!subnetMap.has(route)) subnetMap.set(route, [])
+      subnetMap.get(route)!.push(device)
+    }
+  }
+  const entries = [...subnetMap.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+
+  return (
+    <div>
+      <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Subnet Routers</div>
+      <div className="card overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-surface-4 text-muted">
+              <th className="px-3 py-2 text-left font-medium">Subnet</th>
+              <th className="px-3 py-2 text-left font-medium">Advertised By</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(([subnet, advertisers]) => (
+              <tr key={subnet} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+                <td className="px-3 py-2 font-mono text-gray-300">{subnet}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {advertisers.map((d) => {
+                      const name = d.name ? d.name.split('.')[0] : d.hostname
+                      const enabled = (d.enabledRoutes ?? []).includes(subnet)
+                      return (
+                        <span key={d.id} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${d.online ? 'bg-surface-3 text-gray-300' : 'bg-surface-3 text-muted'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.online ? 'bg-green-400' : 'bg-surface-4'}`} />
+                          {name}
+                          {!enabled && <span className="text-yellow-400/70 ml-0.5" title="Route advertised but not enabled">!</span>}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  {advertisers.some((d) => (d.enabledRoutes ?? []).includes(subnet))
+                    ? <span className="badge-ok">enabled</span>
+                    : <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-medium">advertised only</span>
+                  }
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

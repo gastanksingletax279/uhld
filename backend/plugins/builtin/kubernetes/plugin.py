@@ -994,6 +994,234 @@ class KubernetesPlugin(PluginBase):
         spec = result.spec
         return {"replicas": (spec.replicas or 0) if spec else replicas}
 
+    async def _restart_workload(self, kind: str, namespace: str, name: str) -> dict:
+        """Trigger a rollout restart by patching the pod template annotation."""
+        import datetime
+        apps = self._apps_v1()
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+        patch = {"spec": {"template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": now}}}}}
+        _kind = kind.lower()
+        if _kind == "deployment":
+            await self._run(apps.patch_namespaced_deployment, name, namespace, patch)
+        elif _kind == "statefulset":
+            await self._run(apps.patch_namespaced_stateful_set, name, namespace, patch)
+        elif _kind == "daemonset":
+            await self._run(apps.patch_namespaced_daemon_set, name, namespace, patch)
+        else:
+            raise ValueError(f"Unsupported workload kind for restart: {kind}")
+        return {"ok": True, "kind": kind, "name": name}
+
+    async def _delete_namespace(self, name: str) -> dict:
+        from kubernetes import client  # type: ignore[import]
+        v1 = self._core_v1()
+        await self._run(v1.delete_namespace, name, body=client.V1DeleteOptions())
+        return {"ok": True, "name": name}
+
+    # ── Access control ────────────────────────────────────────────────────────
+
+    def _rbac_v1(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.RbacAuthorizationV1Api(self._get_api_client())
+
+    async def _fetch_serviceaccounts(self, namespace: str = "") -> list[dict]:
+        v1 = self._core_v1()
+        if namespace:
+            items = (await self._run(v1.list_namespaced_service_account, namespace)).items
+        else:
+            items = (await self._run(v1.list_service_account_for_all_namespaces)).items
+        return [
+            {
+                "name": sa.metadata.name,
+                "namespace": sa.metadata.namespace,
+                "secrets": len(sa.secrets or []),
+                "created": _ts(sa.metadata.creation_timestamp),
+            }
+            for sa in items
+        ]
+
+    async def _fetch_roles(self, namespace: str = "") -> list[dict]:
+        rbac = self._rbac_v1()
+        if namespace:
+            items = (await self._run(rbac.list_namespaced_role, namespace)).items
+        else:
+            items = (await self._run(rbac.list_role_for_all_namespaces)).items
+        return [
+            {
+                "name": r.metadata.name,
+                "namespace": r.metadata.namespace,
+                "rules": len(r.rules or []),
+                "created": _ts(r.metadata.creation_timestamp),
+            }
+            for r in items
+        ]
+
+    async def _fetch_clusterroles(self) -> list[dict]:
+        rbac = self._rbac_v1()
+        items = (await self._run(rbac.list_cluster_role)).items
+        return [
+            {
+                "name": r.metadata.name,
+                "rules": len(r.rules or []),
+                "aggregation": bool(r.aggregation_rule),
+                "created": _ts(r.metadata.creation_timestamp),
+            }
+            for r in items
+        ]
+
+    async def _fetch_rolebindings(self, namespace: str = "") -> list[dict]:
+        rbac = self._rbac_v1()
+        if namespace:
+            items = (await self._run(rbac.list_namespaced_role_binding, namespace)).items
+        else:
+            items = (await self._run(rbac.list_role_binding_for_all_namespaces)).items
+        return [
+            {
+                "name": rb.metadata.name,
+                "namespace": rb.metadata.namespace,
+                "role_ref": f"{rb.role_ref.kind}/{rb.role_ref.name}" if rb.role_ref else "",
+                "subjects": len(rb.subjects or []),
+                "created": _ts(rb.metadata.creation_timestamp),
+            }
+            for rb in items
+        ]
+
+    async def _fetch_clusterrolebindings(self) -> list[dict]:
+        rbac = self._rbac_v1()
+        items = (await self._run(rbac.list_cluster_role_binding)).items
+        return [
+            {
+                "name": rb.metadata.name,
+                "role_ref": f"{rb.role_ref.kind}/{rb.role_ref.name}" if rb.role_ref else "",
+                "subjects": len(rb.subjects or []),
+                "created": _ts(rb.metadata.creation_timestamp),
+            }
+            for rb in items
+        ]
+
+    # ── Helm releases ─────────────────────────────────────────────────────────
+
+    async def _fetch_helm_releases(self, namespace: str = "") -> list[dict]:
+        """List Helm v3 releases by reading the release secrets (owner=helm)."""
+        import base64, gzip, json as _json
+        v1 = self._core_v1()
+        label_selector = "owner=helm,status=deployed"
+        try:
+            if namespace:
+                items = (await self._run(
+                    v1.list_namespaced_secret, namespace,
+                    label_selector=label_selector,
+                )).items
+            else:
+                items = (await self._run(
+                    v1.list_secret_for_all_namespaces,
+                    label_selector=label_selector,
+                )).items
+        except Exception:
+            return []
+
+        result = []
+        for sec in items:
+            labels = sec.metadata.labels or {}
+            release_data: dict = {}
+            raw = (sec.data or {}).get("release")
+            if raw:
+                try:
+                    # Helm stores: base64(gzip(base64(json)))
+                    decoded = base64.b64decode(raw)
+                    decoded2 = base64.b64decode(decoded)
+                    release_data = _json.loads(gzip.decompress(decoded2))
+                except Exception:
+                    pass
+
+            chart_meta = release_data.get("chart", {}).get("metadata", {})
+            info = release_data.get("info", {})
+            result.append({
+                "name": labels.get("name", sec.metadata.name.replace("sh.helm.release.v1.", "").rsplit(".", 1)[0]),
+                "namespace": sec.metadata.namespace,
+                "chart": chart_meta.get("name", ""),
+                "chart_version": chart_meta.get("version", ""),
+                "app_version": chart_meta.get("appVersion", ""),
+                "revision": int(labels.get("version", "1")),
+                "status": labels.get("status", ""),
+                "description": info.get("description", ""),
+                "first_deployed": info.get("first_deployed", ""),
+                "last_deployed": info.get("last_deployed", ""),
+            })
+
+        result.sort(key=lambda r: (r["namespace"], r["name"]))
+        return result
+
+    # ── Realtime log streaming ─────────────────────────────────────────────────
+
+    async def _stream_pod_logs(self, websocket, namespace: str, pod: str, container: str = "") -> None:
+        """Stream pod logs to a WebSocket in real time using a background thread."""
+        await websocket.accept()
+        v1 = self._core_v1()
+        loop = asyncio.get_event_loop()
+        kwargs: dict = {"follow": True, "_preload_content": False, "timestamps": True}
+        if container:
+            kwargs["container"] = container
+        try:
+            resp = await loop.run_in_executor(None, lambda: v1.read_namespaced_pod_log(pod, namespace, **kwargs))
+        except Exception as exc:
+            try:
+                await websocket.send_text(f"Error opening log stream: {exc}\n")
+                await websocket.close()
+            except Exception:
+                pass
+            return
+
+        output_q: asyncio.Queue[str | None] = asyncio.Queue()
+        stop_event = threading.Event()
+
+        def _read_thread() -> None:
+            try:
+                for chunk in resp.stream(amt=4096):
+                    if stop_event.is_set():
+                        break
+                    text = chunk.decode("utf-8", errors="replace")
+                    loop.call_soon_threadsafe(output_q.put_nowait, text)
+            except Exception:
+                pass
+            finally:
+                loop.call_soon_threadsafe(output_q.put_nowait, None)
+
+        t = threading.Thread(target=_read_thread, daemon=True)
+        t.start()
+
+        async def send_loop():
+            try:
+                while True:
+                    chunk = await output_q.get()
+                    if chunk is None:
+                        break
+                    try:
+                        await websocket.send_text(chunk)
+                    except Exception:
+                        break
+            finally:
+                stop_event.set()
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+
+        async def recv_loop():
+            try:
+                async for _ in websocket.iter_text():
+                    pass
+            except Exception:
+                pass
+            finally:
+                stop_event.set()
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+
+        await asyncio.gather(send_loop(), recv_loop(), return_exceptions=True)
+        t.join(timeout=2)
+
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.kubernetes.api import make_router
         return make_router(self)

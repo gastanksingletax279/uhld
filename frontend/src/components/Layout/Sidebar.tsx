@@ -23,6 +23,11 @@ export function Sidebar() {
     if (!byCategory[cat]) byCategory[cat] = []
     byCategory[cat].push(p)
   }
+  // Count instances per plugin_id so we know when to show labels
+  const instanceCount: Record<string, number> = {}
+  for (const p of enabled) {
+    instanceCount[p.plugin_id] = (instanceCount[p.plugin_id] ?? 0) + 1
+  }
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-1 border-r border-surface-4 flex flex-col">
@@ -50,9 +55,9 @@ export function Sidebar() {
                 key={`${p.plugin_id}:${p.instance_id}`}
                 to={p.instance_id === 'default' ? `/plugins/${p.plugin_id}` : `/plugins/${p.plugin_id}/${p.instance_id}`}
                 icon={<PluginIcon name={p.icon} className="w-4 h-4" />}
-                label={p.instance_id === 'default'
-                  ? p.display_name
-                  : `${p.display_name} — ${p.instance_label || p.instance_id}`}
+                label={instanceCount[p.plugin_id] > 1
+                  ? `${p.display_name} — ${p.instance_label || p.instance_id}`
+                  : p.display_name}
                 healthStatus={p.health_status}
               />
             ))}
