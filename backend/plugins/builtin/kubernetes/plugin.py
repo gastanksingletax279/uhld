@@ -188,10 +188,11 @@ class KubernetesPlugin(PluginBase):
         for n in nodes.items:
             conditions = n.status.conditions or []
             ready = any(c.type == "Ready" and c.status == "True" for c in conditions)
+            _role_prefix = "node-role.kubernetes.io/"
             roles = sorted(
-                k.replace("node-role.kubernetes.io/", "")
+                k[len(_role_prefix):]
                 for k in (n.metadata.labels or {})
-                if k.startswith("node-role.kubernetes.io/")
+                if k.startswith(_role_prefix)
             ) or ["worker"]
             version = (n.status.node_info.kubelet_version or "") if n.status.node_info else ""
             result.append({
