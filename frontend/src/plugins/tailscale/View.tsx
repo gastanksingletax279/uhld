@@ -11,6 +11,7 @@ import {
   Settings, CheckCircle2, MoreVertical, Pencil, X,
 } from 'lucide-react'
 import { getViewState, setViewState } from '../../store/viewStateStore'
+import { ConfirmModal, ConfirmModalState } from '../../components/ConfirmModal'
 
 type Tab = 'devices' | 'users' | 'dns' | 'acl' | 'keys' | 'settings'
 type SortKey = 'hostname' | 'os' | 'user' | 'lastSeen' | 'online' | 'clientVersion'
@@ -78,6 +79,7 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
   const [deviceModal, setDeviceModal] = useState<DeviceModal | null>(null)
   const [modalSaving, setModalSaving] = useState(false)
   const [modalError, setModalError] = useState<string | null>(null)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
 
   // Local sidecar status
   const [localStatus, setLocalStatus] = useState<TailscaleLocalStatus | null>(null)
@@ -162,11 +164,28 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
     deviceId: string,
     extra?: unknown,
   ) {
+    if (action === 'delete') {
+      setConfirmModal({
+        title: 'Remove device from tailnet?',
+        message: 'This will permanently remove the device. It will need to re-authenticate to rejoin. This cannot be undone.',
+        confirmLabel: 'Remove',
+        confirmClass: 'bg-danger hover:bg-danger/80',
+        onConfirm: () => { setConfirmModal(null); executeDeviceAction('delete', deviceId) },
+      })
+      return
+    }
+    await executeDeviceAction(action, deviceId, extra)
+  }
+
+  async function executeDeviceAction(
+    action: 'delete' | 'expire' | 'authorize' | 'toggle-expiry',
+    deviceId: string,
+    extra?: unknown,
+  ) {
     setDeviceActionLoading(`${action}:${deviceId}`)
     setDeviceActionError(null)
     try {
       if (action === 'delete') {
-        if (!window.confirm('Delete this device from your tailnet? This cannot be undone.')) return
         await tailscale.deleteDevice(deviceId)
         setDevices((prev) => prev.filter((d) => d.id !== deviceId))
       } else if (action === 'expire') {
@@ -774,6 +793,8 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
           </div>
         </div>
       )}
+
+      {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
     </div>
   )
 }

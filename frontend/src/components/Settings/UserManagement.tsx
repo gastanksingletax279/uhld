@@ -5,6 +5,7 @@ import {
   Users, Plus, Trash2, Shield, Eye, RefreshCw,
   UserCheck, UserX, KeyRound, X, Check
 } from 'lucide-react'
+import { ConfirmModal, ConfirmModalState, InputModal, InputModalState } from '../ConfirmModal'
 
 export function UserManagement() {
   const currentUser = useAuthStore((s) => s.user)
@@ -12,6 +13,9 @@ export function UserManagement() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
+  const [inputModal, setInputModal] = useState<InputModalState | null>(null)
+  const [successMsg, setSuccessMsg] = useState('')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -47,7 +51,16 @@ export function UserManagement() {
   }
 
   async function deleteUser(user: ManagedUser) {
-    if (!confirm(`Delete user "${user.username}"? This cannot be undone.`)) return
+    setConfirmModal({
+      title: `Delete user "${user.username}"?`,
+      message: 'This user account will be permanently deleted. This cannot be undone.',
+      confirmLabel: 'Delete',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doDeleteUser(user) },
+    })
+  }
+
+  async function doDeleteUser(user: ManagedUser) {
     try {
       await api.deleteUser(user.id)
       await refresh()
@@ -57,17 +70,27 @@ export function UserManagement() {
   }
 
   async function resetPassword(user: ManagedUser) {
-    const pw = prompt(`New password for "${user.username}":`)
-    if (!pw) return
-    try {
-      await api.adminResetPassword(user.id, pw)
-      alert('Password reset successfully')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset password')
-    }
+    setInputModal({
+      title: `Reset password for "${user.username}"`,
+      inputLabel: 'New password',
+      inputType: 'password',
+      placeholder: 'Enter new password',
+      confirmLabel: 'Reset Password',
+      onConfirm: async (pw) => {
+        setInputModal(null)
+        try {
+          await api.adminResetPassword(user.id, pw)
+          setSuccessMsg(`Password reset for ${user.username}`)
+          setTimeout(() => setSuccessMsg(''), 4000)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to reset password')
+        }
+      },
+    })
   }
 
   return (
+    <>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -76,6 +99,7 @@ export function UserManagement() {
           <span className="text-xs text-muted">({users.length})</span>
         </div>
         <div className="flex gap-2">
+
           <button onClick={refresh} disabled={loading} className="btn-secondary text-xs px-2 py-1">
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -88,6 +112,12 @@ export function UserManagement() {
       {error && (
         <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded px-3 py-2">
           {error}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="text-sm text-success bg-success/10 border border-success/30 rounded px-3 py-2">
+          {successMsg}
         </div>
       )}
 
@@ -179,6 +209,9 @@ export function UserManagement() {
         )}
       </div>
     </div>
+    {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
+    {inputModal && <InputModal modal={inputModal} onCancel={() => setInputModal(null)} />}
+    </>
   )
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Bell, BellOff, CheckCheck, Trash2, RefreshCw, Loader2, Send, AlertCircle } from 'lucide-react'
 import { api, NotificationItem } from '../../api/client'
+import { ConfirmModal, ConfirmModalState } from '../../components/ConfirmModal'
 
 type Tab = 'history' | 'channels'
 
@@ -34,6 +35,7 @@ export function NotificationsView({ instanceId = 'default' }: { instanceId?: str
 
   const [marking, setMarking] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,7 +65,16 @@ export function NotificationsView({ instanceId = 'default' }: { instanceId?: str
   }
 
   async function clearHistory() {
-    if (!confirm('Clear all notification history? This cannot be undone.')) return
+    setConfirmModal({
+      title: 'Clear notification history?',
+      message: 'All notification history will be permanently deleted. This cannot be undone.',
+      confirmLabel: 'Clear All',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doClearing() },
+    })
+  }
+
+  async function doClearing() {
     setClearing(true)
     try {
       await notifApi.clearHistory()
@@ -87,6 +98,7 @@ export function NotificationsView({ instanceId = 'default' }: { instanceId?: str
   }
 
   return (
+    <>
     <div className="space-y-4 max-w-5xl">
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-surface-4 pb-0">
@@ -313,5 +325,8 @@ export function NotificationsView({ instanceId = 'default' }: { instanceId?: str
         </div>
       )}
     </div>
+
+    {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
+    </>
   )
 }

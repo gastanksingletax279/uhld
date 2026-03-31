@@ -83,6 +83,58 @@ def make_router(plugin: DockerPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    @router.delete("/images/{image_id:path}")
+    async def delete_image(image_id: str, force: bool = False):
+        try:
+            return await plugin._delete_image(image_id, force)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/networks")
+    async def list_networks():
+        try:
+            networks = await plugin._fetch_networks()
+            return {"networks": networks}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/volumes")
+    async def list_volumes():
+        try:
+            volumes = await plugin._fetch_volumes()
+            return {"volumes": volumes}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/compose")
+    async def list_compose():
+        try:
+            projects = await plugin._fetch_compose_projects()
+            return {"projects": projects}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/compose/{project}/start")
+    async def compose_start(project: str):
+        try:
+            return await plugin._compose_action(project, "start")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/compose/{project}/stop")
+    async def compose_stop(project: str):
+        try:
+            return await plugin._compose_action(project, "stop")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/compose/{project}/restart")
+    async def compose_restart(project: str):
+        try:
+            return await plugin._compose_action(project, "restart")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     @router.websocket("/containers/{container_id}/exec")
     async def exec_container(container_id: str, websocket: WebSocket, cmd: str = Query(default="/bin/sh")):
         await plugin._exec_container_shell(container_id, cmd, websocket)

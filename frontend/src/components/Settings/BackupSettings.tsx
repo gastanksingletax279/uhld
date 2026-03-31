@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, Trash2, Plus, Upload, RefreshCw, Loader2, AlertCircle, CheckCircle2, Database, Clock } from 'lucide-react'
 import { api, BackupInfo, BackupSchedule } from '../../api/client'
+import { ConfirmModal, ConfirmModalState } from '../ConfirmModal'
 
 export function BackupSettings() {
   const [backups, setBackups] = useState<BackupInfo[]>([])
@@ -12,6 +13,8 @@ export function BackupSettings() {
   const [deletingFile, setDeletingFile] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function loadAll() {
     setLoading(true)
@@ -49,7 +52,16 @@ export function BackupSettings() {
   }
 
   async function deleteBackup(filename: string) {
-    if (!confirm(`Delete backup "${filename}"?`)) return
+    setConfirmModal({
+      title: `Delete backup?`,
+      message: `"${filename}" will be permanently deleted.`,
+      confirmLabel: 'Delete',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doDeleteBackup(filename) },
+    })
+  }
+
+  async function doDeleteBackup(filename: string) {
     setDeletingFile(filename)
     setError(null)
     try {
@@ -66,10 +78,18 @@ export function BackupSettings() {
   async function handleRestore(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (!confirm('Restore from this backup? All current plugin configurations will be overwritten (plugins will be set to disabled — re-enable them after restore). Settings will also be restored.')) {
-      e.target.value = ''
-      return
-    }
+    // Clear the input immediately so the same file can be re-selected later
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    setConfirmModal({
+      title: 'Restore from backup?',
+      message: 'All current plugin configurations will be overwritten. Plugins will be set to disabled — re-enable them after restore. Settings will also be restored.',
+      confirmLabel: 'Restore',
+      confirmClass: 'bg-warning hover:bg-warning/80',
+      onConfirm: () => { setConfirmModal(null); doRestore(file) },
+    })
+  }
+
+  async function doRestore(file: File) {
     setRestoring(true)
     setError(null)
     try {
@@ -79,7 +99,6 @@ export function BackupSettings() {
       setError(er instanceof Error ? er.message : 'Failed to restore backup')
     } finally {
       setRestoring(false)
-      e.target.value = ''
     }
   }
 
@@ -111,6 +130,7 @@ export function BackupSettings() {
   }
 
   return (
+    <>
     <div className="space-y-6 max-w-3xl">
       {/* Feedback banners */}
       {error && (
@@ -145,6 +165,7 @@ export function BackupSettings() {
             {restoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
             Restore from File
             <input
+              ref={fileInputRef}
               type="file"
               accept=".json"
               className="hidden"
@@ -273,5 +294,7 @@ export function BackupSettings() {
         </button>
       </div>
     </div>
+    {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
+    </>
   )
 }

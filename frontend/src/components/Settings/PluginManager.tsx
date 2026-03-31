@@ -4,6 +4,7 @@ import { PluginConfigForm } from './PluginConfigForm'
 import { PluginIcon } from '../PluginIcon'
 import { PluginDetail, PluginListItem } from '../../api/client'
 import { X, Loader2, CheckCircle2, XCircle, AlertCircle, Plus, Trash2 } from 'lucide-react'
+import { ConfirmModal, ConfirmModalState } from '../ConfirmModal'
 
 const CATEGORIES = [
   'all', 'virtualization', 'containers', 'monitoring', 'network', 'storage', 'media', 'arr', 'security', 'automation',
@@ -39,6 +40,7 @@ export function PluginManager() {
   const [addModalError, setAddModalError] = useState('')
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
 
   useEffect(() => {
     fetchPlugins()
@@ -106,7 +108,16 @@ export function PluginManager() {
   }
 
   async function handleDelete(pluginId: string, instanceId: string) {
-    if (!window.confirm(`Delete instance "${instanceId}" of ${pluginId}? This cannot be undone.`)) return
+    setConfirmModal({
+      title: `Delete instance "${instanceId}"?`,
+      message: `This will permanently delete the "${instanceId}" instance of ${pluginId}. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doDelete(pluginId, instanceId) },
+    })
+  }
+
+  async function doDelete(pluginId: string, instanceId: string) {
     const key = `${pluginId}:${instanceId}`
     setActionLoading(key)
     try {
@@ -118,7 +129,17 @@ export function PluginManager() {
 
   async function handleClear() {
     if (!configModal) return
-    if (!window.confirm(`Clear all settings for this instance? This will disable it.`)) return
+    setConfirmModal({
+      title: 'Clear all settings?',
+      message: 'All settings for this instance will be cleared and it will be disabled.',
+      confirmLabel: 'Clear Settings',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doClear() },
+    })
+  }
+
+  async function doClear() {
+    if (!configModal) return
     setModalLoading(true)
     setModalError('')
     try {
@@ -431,6 +452,7 @@ export function PluginManager() {
           </div>
         </div>
       )}
+      {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
     </div>
   )
 }

@@ -5,6 +5,7 @@ import {
   Shield, ShieldCheck, ShieldOff, Fingerprint, Trash2,
   Plus, Check, KeyRound, QrCode, Edit2
 } from 'lucide-react'
+import { ConfirmModal, ConfirmModalState, InputModal, InputModalState } from '../ConfirmModal'
 
 export function AccountSettings() {
   const user = useAuthStore((s) => s.user)
@@ -254,6 +255,8 @@ function PasskeysSection() {
   const [error, setError] = useState('')
   const [newKeyName, setNewKeyName] = useState('')
   const [showNameInput, setShowNameInput] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
+  const [inputModal, setInputModal] = useState<InputModalState | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -287,7 +290,16 @@ function PasskeysSection() {
   }
 
   async function deletePasskey(id: number) {
-    if (!confirm('Remove this passkey?')) return
+    setConfirmModal({
+      title: 'Remove passkey?',
+      message: 'This passkey will be permanently removed. You will no longer be able to use it to sign in.',
+      confirmLabel: 'Remove',
+      confirmClass: 'bg-danger hover:bg-danger/80',
+      onConfirm: () => { setConfirmModal(null); doDeletePasskey(id) },
+    })
+  }
+
+  async function doDeletePasskey(id: number) {
     setLoading(true)
     try {
       await api.deletePasskey(id)
@@ -300,19 +312,28 @@ function PasskeysSection() {
   }
 
   async function renamePasskey(id: number, currentName: string) {
-    const name = prompt('New name:', currentName)
-    if (!name || !name.trim()) return
-    try {
-      await api.renamePasskey(id, name.trim())
-      await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to rename passkey')
-    }
+    setInputModal({
+      title: 'Rename passkey',
+      inputLabel: 'New name',
+      defaultValue: currentName,
+      placeholder: 'e.g. MacBook Touch ID',
+      confirmLabel: 'Rename',
+      onConfirm: async (name) => {
+        setInputModal(null)
+        try {
+          await api.renamePasskey(id, name.trim())
+          await refresh()
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to rename passkey')
+        }
+      },
+    })
   }
 
   const passkeySupported = typeof navigator !== 'undefined' && 'credentials' in navigator
 
   return (
+    <>
     <div className="card p-5">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -374,6 +395,9 @@ function PasskeysSection() {
         </div>
       )}
     </div>
+    {confirmModal && <ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />}
+    {inputModal && <InputModal modal={inputModal} onCancel={() => setInputModal(null)} />}
+    </>
   )
 }
 

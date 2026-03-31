@@ -166,19 +166,171 @@ class DockerPlugin(PluginBase):
         return containers
 
     async def _fetch_images(self) -> list[dict]:
-        resp = await self._get_client().get(self._url("/images/json"))
-        resp.raise_for_status()
+        import asyncio as _asyncio
+
+        async def _get_imgs():
+            r = await self._get_client().get(self._url("/images/json"))
+            r.raise_for_status()
+            return r.json()
+
+        async def _get_ctrs():
+            r = await self._get_client().get(self._url("/containers/json?all=1"))
+            r.raise_for_status()
+            return r.json()
+
+        imgs_data, ctrs_data = await _asyncio.gather(_get_imgs(), _get_ctrs())
+        used_ids: set[str] = {c.get("ImageID", "") for c in ctrs_data if c.get("ImageID")}
         images = []
-        for img in resp.json():
+        for img in imgs_data:
+            full_id = img["Id"]
             images.append({
-                "id": img["Id"].replace("sha256:", "")[:12],
-                "full_id": img["Id"],
+                "id": full_id.replace("sha256:", "")[:12],
+                "full_id": full_id,
                 "repo_tags": img.get("RepoTags") or ["<none>:<none>"],
                 "size": img.get("Size", 0),
                 "created": img.get("Created", 0),
                 "labels": img.get("Labels") or {},
+                "used": full_id in used_ids,
             })
         return images
+
+    async def _delete_image(self, image_id: str, force: bool = False) -> dict:
+        params = "?force=true" if force else ""
+        resp = await self._get_client().delete(self._url(f"/images/{image_id}{params}"))
+        if resp.status_code not in (200, 204):
+            try:
+                msg = resp.json().get("message", resp.text)
+            except Exception:
+                msg = resp.text or f"HTTP {resp.status_code}"
+            raise ValueError(msg)
+        return {"message": "Image deleted"}
+
+    async def _fetch_networks(self) -> list[dict]:
+        resp = await self._get_client().get(self._url("/networks"))
+        resp.raise_for_status()
+        networks = []
+        for net in resp.json():
+            containers = []
+            for cid, cdata in (net.get("Containers") or {}).items():
+                containers.append({
+                    "id": cid[:12],
+                    "name": cdata.get("Name", ""),
+                    "ipv4": cdata.get("IPv4Address", ""),
+                })
+            ipam_config = []
+            for cfg in ((net.get("IPAM") or {}).get("Config") or []):
+                ipam_config.append({
+                    "subnet": cfg.get("Subnet", ""),
+                    "gateway": cfg.get("Gateway", ""),
+                })
+            networks.append({
+                "id": net["Id"][:12],
+                "full_id": net["Id"],
+                "name": net.get("Name", ""),
+                "driver": net.get("Driver", ""),
+                "scope": net.get("Scope", ""),
+                "created": net.get("Created", ""),
+                "internal": bool(net.get("Internal", False)),
+                "attachable": bool(net.get("Attachable", False)),
+                "ipam_config": ipam_config,
+                "containers": containers,
+            })
+        return sorted(networks, key=lambda n: n["name"])
+
+    async def _fetch_volumes(self) -> list[dict]:
+        import asyncio as _asyncio
+
+        async def _get_vols():
+            r = await self._get_client().get(self._url("/volumes"))
+            r.raise_for_status()
+            return r.json()
+
+        async def _get_ctrs():
+            r = await self._get_client().get(self._url("/containers/json?all=1"))
+            r.raise_for_status()
+            return r.json()
+
+        vols_data, ctrs_data = await _asyncio.gather(_get_vols(), _get_ctrs())
+
+        vol_containers: dict[str, list[str]] = {}
+        for c in ctrs_data:
+            cnames = [n.lstrip("/") for n in c.get("Names", [])]
+            cname = cnames[0] if cnames else c["Id"][:12]
+            for mount in (c.get("Mounts") or []):
+                if mount.get("Type") == "volume":
+                    vol_name = mount.get("Name", "")
+                    if vol_name:
+                        vol_containers.setdefault(vol_name, []).append(cname)
+
+        volumes = []
+        for vol in (vols_data.get("Volumes") or []):
+            name = vol.get("Name", "")
+            volumes.append({
+                "name": name,
+                "driver": vol.get("Driver", ""),
+                "mountpoint": vol.get("Mountpoint", ""),
+                "scope": vol.get("Scope", ""),
+                "created": vol.get("CreatedAt", ""),
+                "labels": vol.get("Labels") or {},
+                "containers": vol_containers.get(name, []),
+            })
+        return sorted(volumes, key=lambda v: v["name"])
+
+    async def _fetch_compose_projects(self) -> list[dict]:
+        resp = await self._get_client().get(self._url("/containers/json?all=1"))
+        resp.raise_for_status()
+        projects: dict[str, dict] = {}
+        for c in resp.json():
+            labels = c.get("Labels") or {}
+            project = labels.get("com.docker.compose.project")
+            if not project:
+                continue
+            if project not in projects:
+                projects[project] = {
+                    "name": project,
+                    "config_files": labels.get("com.docker.compose.project.config_files", ""),
+                    "working_dir": labels.get("com.docker.compose.project.working_dir", ""),
+                    "services": [],
+                }
+            cnames = [n.lstrip("/") for n in c.get("Names", [])]
+            projects[project]["services"].append({
+                "id": c["Id"][:12],
+                "full_id": c["Id"],
+                "service": labels.get("com.docker.compose.service", ""),
+                "name": cnames[0] if cnames else c["Id"][:12],
+                "image": c.get("Image", ""),
+                "state": c.get("State", ""),
+                "status": c.get("Status", ""),
+            })
+        result = list(projects.values())
+        for p in result:
+            states = [s["state"] for s in p["services"]]
+            if all(s == "running" for s in states):
+                p["state"] = "running"
+            elif all(s not in ("running", "restarting") for s in states):
+                p["state"] = "stopped"
+            else:
+                p["state"] = "partial"
+        return sorted(result, key=lambda x: x["name"])
+
+    async def _compose_action(self, project: str, action: str) -> dict:
+        resp = await self._get_client().get(self._url("/containers/json?all=1"))
+        resp.raise_for_status()
+        container_ids = [
+            c["Id"] for c in resp.json()
+            if (c.get("Labels") or {}).get("com.docker.compose.project") == project
+        ]
+        if not container_ids:
+            raise ValueError(f"No containers found for project '{project}'")
+        errors = []
+        for cid in container_ids:
+            try:
+                await self._container_action(cid, action)
+            except Exception as exc:
+                errors.append(str(exc))
+        if errors:
+            raise ValueError(f"{len(errors)} error(s): {'; '.join(errors[:3])}")
+        return {"message": f"Project {action} successful", "count": len(container_ids)}
 
     async def _container_action(self, container_id: str, action: str) -> dict:
         resp = await self._get_client().post(self._url(f"/containers/{container_id}/{action}"))

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   api,
   UniFiClient, UniFiDevice, UniFiPort,
@@ -9,6 +10,7 @@ import {
   RotateCcw, ChevronUp, ChevronDown, ArrowUpCircle,
 } from 'lucide-react'
 import { getViewState, setViewState } from '../../store/viewStateStore'
+import { ConfirmModal, ConfirmModalState } from '../../components/ConfirmModal'
 
 type Tab = 'clients' | 'devices' | 'ports' | 'networks' | 'wlans' | 'firewall'
 
@@ -331,9 +333,18 @@ function ClientRow({
 }) {
   const [kicking, setKicking] = useState(false)
   const [kickMsg, setKickMsg] = useState<string | null>(null)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null)
 
   async function bounce() {
-    if (!window.confirm(`Bounce ${c.hostname || c.mac}? This will force them to reconnect.`)) return
+    setConfirmModal({
+      title: `Reconnect ${c.hostname || c.mac}?`,
+      message: 'This will force the client to disconnect and reconnect to the network.',
+      confirmLabel: 'Reconnect',
+      onConfirm: () => { setConfirmModal(null); doBounce() },
+    })
+  }
+
+  async function doBounce() {
     setKicking(true); setKickMsg(null)
     try {
       await onKick(c.id || c.mac)
@@ -345,6 +356,7 @@ function ClientRow({
   }
 
   return (
+    <>
     <tr className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
       <td className="px-3 py-2">
         <div className="font-medium text-gray-200">{c.hostname || '—'}</div>
@@ -381,6 +393,8 @@ function ClientRow({
         )}
       </td>
     </tr>
+    {confirmModal && createPortal(<ConfirmModal modal={confirmModal} onCancel={() => setConfirmModal(null)} />, document.body)}
+    </>
   )
 }
 
