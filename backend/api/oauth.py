@@ -16,7 +16,7 @@ import os
 import secrets
 import threading
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -36,6 +36,12 @@ _state_lock = threading.Lock()
 
 OAUTH_BASE_URL = os.getenv("OAUTH_BASE_URL", "http://localhost:8000").rstrip("/")
 OAUTH_AUTO_PROVISION = os.getenv("OAUTH_AUTO_PROVISION", "false").lower() == "true"
+
+_OAUTH_AUTHORIZE_HOSTS = {
+    "entra": "login.microsoftonline.com",
+    "google": "accounts.google.com",
+    "github": "github.com",
+}
 
 # ── Provider definitions ──────────────────────────────────────────────────────
 
@@ -138,6 +144,11 @@ async def oauth_redirect(provider: str):
         "scope":         cfg["scopes"],
         "state":         state,
     }
+    parsed = urlparse(cfg["authorize_url"])
+    expected_host = _OAUTH_AUTHORIZE_HOSTS.get(provider)
+    if parsed.scheme != "https" or parsed.hostname != expected_host:
+        raise HTTPException(status_code=500, detail="Invalid OAuth provider authorize URL")
+
     return RedirectResponse(url=f"{cfg['authorize_url']}?{urlencode(params)}")
 
 
@@ -152,7 +163,8 @@ async def oauth_callback(
 ):
     """Handle the OAuth provider callback and issue a JWT cookie."""
     if error:
-        return RedirectResponse(url=f"/?oauth_error={error}")
+        # Do not reflect arbitrary provider error strings into redirect URLs.
+        return RedirectResponse(url="/?oauth_error=provider_error")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 

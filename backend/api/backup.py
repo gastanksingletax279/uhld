@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,12 +33,20 @@ def _backup_dir() -> Path:
     return d
 
 
-def _safe_filename(filename: str) -> None:
-    """Raise HTTPException if filename is not a safe backup filename."""
-    if "/" in filename or "\\" in filename or ".." in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not filename.startswith("backup_") or not filename.endswith(".json"):
-        raise HTTPException(status_code=400, detail="Invalid filename — must start with 'backup_' and end with '.json'")
+_BACKUP_FILENAME_RE = re.compile(r"^backup_\d{8}_\d{6}\.json$")
+
+
+def _resolve_backup_path(filename: str) -> Path:
+    """Validate backup filename and return a path constrained to the backup directory."""
+    if not _BACKUP_FILENAME_RE.fullmatch(filename):
+        raise HTTPException(status_code=400, detail="Invalid backup filename format")
+
+    backup_dir = _backup_dir().resolve()
+    path = (backup_dir / filename).resolve()
+    if path.parent != backup_dir:
+        # Defense-in-depth in case future filename constraints are loosened.
+        raise HTTPException(status_code=400, detail="Invalid filename path")
+    return path
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -99,8 +108,7 @@ async def create_backup(
 @router.get("/{filename}/download")
 async def download_backup(filename: str, _: User = Depends(require_admin)):
     """Download a backup file."""
-    _safe_filename(filename)
-    path = _backup_dir() / filename
+    path = _resolve_backup_path(filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Backup not found")
     return FileResponse(path=str(path), filename=filename, media_type="application/json")
@@ -109,8 +117,7 @@ async def download_backup(filename: str, _: User = Depends(require_admin)):
 @router.delete("/{filename}")
 async def delete_backup(filename: str, _: User = Depends(require_admin)):
     """Delete a backup file."""
-    _safe_filename(filename)
-    path = _backup_dir() / filename
+    path = _resolve_backup_path(filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Backup not found")
     path.unlink()
