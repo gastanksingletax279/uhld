@@ -197,6 +197,91 @@ def make_router(plugin: ProxmoxPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    # ── RRD performance data ───────────────────────────────────────────────────
+
+    @router.get("/nodes/{node}/rrddata")
+    async def get_node_rrddata(node: str, timeframe: str = "hour", cf: str = "AVERAGE"):
+        """Return time-series RRD data for a node (cpu, mem, net, disk I/O)."""
+        try:
+            client = plugin._client_or_raise()
+            data = await asyncio.to_thread(
+                client.nodes(node).rrddata.get,
+                timeframe=timeframe,
+                cf=cf,
+            )
+            return {"rrddata": data}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/nodes/{node}/qemu/{vmid}/rrddata")
+    async def get_qemu_rrddata(node: str, vmid: int, timeframe: str = "hour", cf: str = "AVERAGE"):
+        """Return time-series RRD data for a QEMU VM."""
+        try:
+            client = plugin._client_or_raise()
+            data = await asyncio.to_thread(
+                client.nodes(node).qemu(vmid).rrddata.get,
+                timeframe=timeframe,
+                cf=cf,
+            )
+            return {"rrddata": data}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/nodes/{node}/lxc/{vmid}/rrddata")
+    async def get_lxc_rrddata(node: str, vmid: int, timeframe: str = "hour", cf: str = "AVERAGE"):
+        """Return time-series RRD data for an LXC container."""
+        try:
+            client = plugin._client_or_raise()
+            data = await asyncio.to_thread(
+                client.nodes(node).lxc(vmid).rrddata.get,
+                timeframe=timeframe,
+                cf=cf,
+            )
+            return {"rrddata": data}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Cluster resources (tree view) ─────────────────────────────────────────
+
+    @router.get("/cluster/resources")
+    async def get_cluster_resources():
+        """Return all cluster resources (nodes, VMs, LXCs, storage) for tree view."""
+        try:
+            client = plugin._client_or_raise()
+            resources: list[dict] = []
+
+            # Proxmox may scope results by type; aggregate key resource groups
+            # so single-node and clustered installs both return nodes + guests.
+            for resource_type in ("node", "vm", "storage", "sdn"):
+                try:
+                    batch = await asyncio.to_thread(
+                        client.cluster.resources.get,
+                        type=resource_type,
+                    )
+                    if batch:
+                        resources.extend(batch)
+                except Exception:
+                    # Some installs may not support every resource type (e.g. sdn).
+                    continue
+
+            if not resources:
+                resources = await asyncio.to_thread(client.cluster.resources.get)
+
+            # Deduplicate by id/type while preserving order.
+            seen: set[tuple[str, str]] = set()
+            deduped: list[dict] = []
+            for item in resources:
+                item_id = str(item.get("id", ""))
+                item_type = str(item.get("type", ""))
+                key = (item_id, item_type)
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(item)
+            return {"resources": deduped}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     # ── Console (VNC for QEMU) ─────────────────────────────
     # DISABLED: Console access requires VNC password research
     # TODO: Re-enable when VNC socket authentication is properly configured

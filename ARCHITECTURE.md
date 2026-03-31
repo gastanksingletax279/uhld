@@ -289,11 +289,19 @@ Each plugin mounts its own router at `/api/plugins/{plugin_id}/`. Examples:
 ```
 # Proxmox
 GET  /api/plugins/proxmox/nodes           # list nodes
+GET  /api/plugins/proxmox/nodes/{node}/status
 GET  /api/plugins/proxmox/nodes/{node}/vms
+GET  /api/plugins/proxmox/vms             # list all VMs/CTs across nodes
 POST /api/plugins/proxmox/nodes/{node}/vms/{vmid}/start
 POST /api/plugins/proxmox/nodes/{node}/vms/{vmid}/stop
+POST /api/plugins/proxmox/nodes/{node}/vms/{vmid}/shutdown
+POST /api/plugins/proxmox/nodes/{node}/vms/{vmid}/reboot
 GET  /api/plugins/proxmox/storage
 GET  /api/plugins/proxmox/tasks
+GET  /api/plugins/proxmox/nodes/{node}/rrddata              # node time-series metrics
+GET  /api/plugins/proxmox/nodes/{node}/qemu/{vmid}/rrddata  # VM time-series metrics
+GET  /api/plugins/proxmox/nodes/{node}/lxc/{vmid}/rrddata   # CT time-series metrics
+GET  /api/plugins/proxmox/cluster/resources                 # tree/topology data
 
 # AdGuard Home
 GET  /api/plugins/adguard/stats

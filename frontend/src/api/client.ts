@@ -191,6 +191,12 @@ export const api = {
         const wsProto = host.startsWith('http') || host.startsWith('wss') ? 'ws' : 'ws'
         return `${wsProto}://${host}:${port}`
       },
+      nodeRrd: (node: string, timeframe = 'hour') =>
+        request<{ rrddata: ProxmoxRrdPoint[] }>(`${p}/nodes/${node}/rrddata?timeframe=${timeframe}`),
+      vmRrd: (node: string, vmid: number, type: string, timeframe = 'hour') =>
+        request<{ rrddata: ProxmoxRrdPoint[] }>(`${p}/nodes/${node}/${type}/${vmid}/rrddata?timeframe=${timeframe}`),
+      clusterResources: () =>
+        request<{ resources: ProxmoxResource[] }>(`${p}/cluster/resources`),
     }
   },
 
@@ -265,6 +271,13 @@ export const api = {
       events:     (since?: number) => request<{ events: DockerEvent[] }>(`${p}/events${since ? `?since=${since}` : ''}`),
       containers: () => request<{ containers: DockerContainer[] }>(`${p}/containers`),
       images:     () => request<{ images: DockerImage[] }>(`${p}/images`),
+      deleteImage: (id: string, force = false) => request<{ message: string }>(`${p}/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+      networks:   () => request<{ networks: DockerNetwork[] }>(`${p}/networks`),
+      volumes:    () => request<{ volumes: DockerVolume[] }>(`${p}/volumes`),
+      compose:       () => request<{ projects: DockerComposeProject[] }>(`${p}/compose`),
+      composeStart:  (proj: string) => request<{ message: string }>(`${p}/compose/${encodeURIComponent(proj)}/start`,   { method: 'POST' }),
+      composeStop:   (proj: string) => request<{ message: string }>(`${p}/compose/${encodeURIComponent(proj)}/stop`,    { method: 'POST' }),
+      composeRestart:(proj: string) => request<{ message: string }>(`${p}/compose/${encodeURIComponent(proj)}/restart`, { method: 'POST' }),
       stats:      (id: string) => request<DockerStats>(`${p}/containers/${id}/stats`),
       start:      (id: string) => request<{ message: string }>(`${p}/containers/${id}/start`,   { method: 'POST' }),
       stop:       (id: string) => request<{ message: string }>(`${p}/containers/${id}/stop`,    { method: 'POST' }),
@@ -565,6 +578,36 @@ export interface SettingItem {
 
 // --- Proxmox types ---
 
+export interface ProxmoxRrdPoint {
+  time: number
+  cpu?: number
+  mem?: number
+  maxmem?: number
+  netin?: number
+  netout?: number
+  diskread?: number
+  diskwrite?: number
+  maxcpu?: number
+  [key: string]: number | undefined
+}
+
+export interface ProxmoxResource {
+  id: string
+  type: 'node' | 'vm' | 'qemu' | 'lxc' | 'storage' | 'pool' | 'sdn' | 'cluster' | string
+  node?: string
+  vmid?: number
+  name?: string
+  status?: string
+  cpu?: number
+  maxcpu?: number
+  mem?: number
+  maxmem?: number
+  disk?: number
+  maxdisk?: number
+  uptime?: number
+  pool?: string
+}
+
 export interface ProxmoxNode {
   node: string
   status: string
@@ -801,6 +844,54 @@ export interface DockerImage {
   size: number
   created: number
   labels: Record<string, string>
+  used: boolean
+}
+
+export interface DockerNetworkContainer {
+  id: string
+  name: string
+  ipv4: string
+}
+
+export interface DockerNetwork {
+  id: string
+  full_id: string
+  name: string
+  driver: string
+  scope: string
+  created: string
+  internal: boolean
+  attachable: boolean
+  ipam_config: { subnet: string; gateway: string }[]
+  containers: DockerNetworkContainer[]
+}
+
+export interface DockerVolume {
+  name: string
+  driver: string
+  mountpoint: string
+  scope: string
+  created: string
+  labels: Record<string, string>
+  containers: string[]
+}
+
+export interface DockerComposeService {
+  id: string
+  full_id: string
+  service: string
+  name: string
+  image: string
+  state: string
+  status: string
+}
+
+export interface DockerComposeProject {
+  name: string
+  config_files: string
+  working_dir: string
+  state: string   // "running" | "stopped" | "partial"
+  services: DockerComposeService[]
 }
 
 // --- Kubernetes types ---

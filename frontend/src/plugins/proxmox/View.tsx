@@ -10,13 +10,22 @@
 // ───────────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react'
-import { api, ProxmoxNode, ProxmoxVM } from '../../api/client'
-import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, ExternalLink, ChevronUp, ChevronDown, Monitor } from 'lucide-react'
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+} from 'recharts'
+import { api, ProxmoxNode, ProxmoxVM, ProxmoxRrdPoint, ProxmoxResource } from '../../api/client'
+import {
+  RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server,
+  ExternalLink, ChevronUp, ChevronDown, ArrowLeft, ChevronRight,
+  Database, Network, Cpu, MemoryStick,
+} from 'lucide-react'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 
-type Tab = 'nodes' | 'vms' | 'storage'
+type Tab = 'nodes' | 'vms' | 'storage' | 'tree'
 type SortDir = 'asc' | 'desc'
 type VmSortKey = 'name' | 'vmid' | 'node' | 'type' | 'status' | 'cpu' | 'mem' | 'uptime'
+type Timeframe = 'hour' | 'day' | 'week' | 'month'
 
 export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string }) {
   const proxmox = api.proxmox(instanceId)
@@ -29,7 +38,9 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
   const [loading, setLoading] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [proxmoxUrl, setProxmoxUrl] = useState<string | null>(null)
+  const [selectedNode, setSelectedNode] = useState<ProxmoxNode | null>(null)
 
   async function load() {
     setLoading(true)
@@ -74,7 +85,7 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
       const res = await proxmox.allVms()
       setVms(res.vms)
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Action failed')
+      setActionError(err instanceof Error ? err.message : 'Action failed')
     } finally {
       setActionLoading(null)
     }
@@ -84,7 +95,22 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
     { id: 'nodes', label: `Nodes (${nodes.length})` },
     { id: 'vms', label: `VMs / CTs (${vms.length})` },
     { id: 'storage', label: `Storage (${storage.length})` },
+    { id: 'tree', label: 'Tree View' },
   ]
+
+  // If a node is selected, show the detail view instead of the tab content
+  if (selectedNode) {
+    return (
+      <NodeDetailView
+        node={selectedNode}
+        vms={vms.filter((v) => v.node === selectedNode.node)}
+        instanceId={instanceId}
+        onBack={() => setSelectedNode(null)}
+        onVmAction={vmAction}
+        actionLoading={actionLoading}
+      />
+    )
+  }
 
   return (
     <div className="space-y-4 max-w-6xl">
@@ -110,6 +136,14 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
           Refresh
         </button>
       </div>
+
+      {actionError && (
+        <div className="flex items-center gap-2 p-3 rounded bg-danger/10 border border-danger/30 text-danger text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {actionError}
+          <button onClick={() => setActionError(null)} className="ml-auto text-danger/70 hover:text-danger">✕</button>
+        </div>
+      )}
 
       {Object.keys(errors).length > 0 && (
         <div className="space-y-1">
@@ -146,47 +180,702 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
         </div>
       ) : (
         <>
-          {tab === 'nodes' && <NodesTab nodes={nodes} error={errors.nodes} />}
+          {tab === 'nodes' && (
+            <NodesTab nodes={nodes} error={errors.nodes} onSelectNode={setSelectedNode} />
+          )}
           {tab === 'vms' && (
             <VmsTab vms={vms} error={errors.vms} actionLoading={actionLoading} onAction={vmAction} />
           )}
           {tab === 'storage' && <StorageTab storage={storage} error={errors.storage} />}
+          {tab === 'tree' && (
+            <TreeTab instanceId={instanceId} vms={vms} onSelectNode={(name) => {
+              const n = nodes.find((nd) => nd.node === name)
+              if (n) setSelectedNode(n)
+            }} />
+          )}
         </>
       )}
     </div>
   )
 }
 
+// ── Node Detail View ───────────────────────────────────────────────────────────
+
+function NodeDetailView({
+  node,
+  vms,
+  instanceId,
+  onBack,
+  onVmAction,
+  actionLoading,
+}: {
+  node: ProxmoxNode
+  vms: ProxmoxVM[]
+  instanceId: string
+  onBack: () => void
+  onVmAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
+  actionLoading: string | null
+}) {
+  const proxmox = api.proxmox(instanceId)
+  const [timeframe, setTimeframe] = useState<Timeframe>('hour')
+  const [rrdData, setRrdData] = useState<ProxmoxRrdPoint[]>([])
+  const [rrdLoading, setRrdLoading] = useState(true)
+  const [rrdError, setRrdError] = useState<string | null>(null)
+
+  async function loadRrd(tf: Timeframe) {
+    setRrdLoading(true)
+    setRrdError(null)
+    try {
+      const r = await proxmox.nodeRrd(node.node, tf)
+      setRrdData(r.rrddata)
+    } catch (e: unknown) {
+      setRrdError(e instanceof Error ? e.message : 'Failed to load performance data')
+    } finally {
+      setRrdLoading(false)
+    }
+  }
+
+  useEffect(() => { loadRrd(timeframe) }, [node.node, timeframe])
+
+  const online = node.status === 'online'
+  const cpuPct = Math.round(node.cpu * 100)
+  const memPct = node.maxmem > 0 ? Math.round((node.mem / node.maxmem) * 100) : 0
+  const diskPct = node.maxdisk > 0 ? Math.round((node.disk / node.maxdisk) * 100) : 0
+
+  const pickMetric = (pt: ProxmoxRrdPoint, keys: string[]): number | null => {
+    for (const key of keys) {
+      const value = pt[key]
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value
+      }
+    }
+    return null
+  }
+
+  // Transform RRD data for charts — filter out null/undefined values
+  const chartData = rrdData.map((pt) => ({
+    time: pt.time,
+    cpu: (() => {
+      const cpu = pickMetric(pt, ['cpu'])
+      return cpu != null ? Math.round(cpu * 100 * 10) / 10 : null
+    })(),
+    memPct: (() => {
+      const memUsed = pickMetric(pt, ['mem', 'memused'])
+      const memTotal = pickMetric(pt, ['maxmem', 'memtotal'])
+      if (memUsed != null && memTotal != null && memTotal > 0) {
+        return Math.round((memUsed / memTotal) * 100 * 10) / 10
+      }
+      const memFraction = pickMetric(pt, ['memory'])
+      if (memFraction != null) {
+        return Math.round(memFraction * 100 * 10) / 10
+      }
+      return null
+    })(),
+    diskPct: (() => {
+      const rootUsed = pickMetric(pt, ['rootused'])
+      const rootTotal = pickMetric(pt, ['roottotal'])
+      if (rootUsed != null && rootTotal != null && rootTotal > 0) {
+        return Math.round((rootUsed / rootTotal) * 100 * 10) / 10
+      }
+      const diskFraction = pickMetric(pt, ['disk'])
+      if (diskFraction != null) {
+        return Math.round(diskFraction * 100 * 10) / 10
+      }
+      return null
+    })(),
+    netin: (() => {
+      const netIn = pickMetric(pt, ['netin'])
+      return netIn != null ? Math.round(netIn / 1024) : null
+    })(),
+    netout: (() => {
+      const netOut = pickMetric(pt, ['netout'])
+      return netOut != null ? Math.round(netOut / 1024) : null
+    })(),
+    diskread: (() => {
+      const read = pickMetric(pt, ['diskread'])
+      return read != null ? Math.round(read / 1024) : null
+    })(),
+    diskwrite: (() => {
+      const write = pickMetric(pt, ['diskwrite'])
+      return write != null ? Math.round(write / 1024) : null
+    })(),
+  }))
+
+  const hasDiskIo = chartData.some((pt) => pt.diskread != null || pt.diskwrite != null)
+
+  return (
+    <div className="space-y-4 max-w-6xl">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-muted hover:text-gray-200 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          <span className="text-surface-4">/</span>
+          <Server className="w-4 h-4 text-muted" />
+          <h2 className="text-base font-semibold text-white">{node.node}</h2>
+          <span className={online ? 'badge-ok' : 'badge-error'}>{node.status}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Timeframe selector */}
+          <div className="flex gap-1">
+            {(['hour', 'day', 'week', 'month'] as Timeframe[]).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  timeframe === tf ? 'bg-surface-4 text-gray-100' : 'text-muted hover:text-gray-300'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => loadRrd(timeframe)}
+            disabled={rrdLoading}
+            className="btn-ghost text-xs gap-1.5"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${rrdLoading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      {online && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard
+            icon={<Cpu className="w-4 h-4" />}
+            label="CPU"
+            value={`${cpuPct}%`}
+            sub={`${node.maxcpu} cores`}
+            pct={cpuPct}
+          />
+          <StatCard
+            icon={<MemoryStick className="w-4 h-4" />}
+            label="Memory"
+            value={fmtBytes(node.mem)}
+            sub={`of ${fmtBytes(node.maxmem)}`}
+            pct={memPct}
+          />
+          <StatCard
+            icon={<Database className="w-4 h-4" />}
+            label="Disk"
+            value={fmtBytes(node.disk)}
+            sub={`of ${fmtBytes(node.maxdisk)}`}
+            pct={diskPct}
+          />
+          <StatCard
+            icon={<Network className="w-4 h-4" />}
+            label="Uptime"
+            value={fmtUptime(node.uptime)}
+            sub="up"
+          />
+        </div>
+      )}
+
+      {/* Performance graphs */}
+      {rrdError ? (
+        <SectionError message={rrdError} />
+      ) : rrdLoading && chartData.length === 0 ? (
+        <div className="flex items-center gap-2 text-muted text-sm py-8 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading performance data…
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <PerfGraph
+            title="CPU Usage"
+            data={chartData}
+            series={[{ key: 'cpu', color: '#3b82f6', name: 'CPU %' }]}
+            unit="%"
+            yMax={100}
+            timeframe={timeframe}
+          />
+          <PerfGraph
+            title="Memory Usage"
+            data={chartData}
+            series={[{ key: 'memPct', color: '#8b5cf6', name: 'Mem %' }]}
+            unit="%"
+            yMax={100}
+            timeframe={timeframe}
+          />
+          <PerfGraph
+            title="Network I/O"
+            data={chartData}
+            series={[
+              { key: 'netin', color: '#10b981', name: 'In' },
+              { key: 'netout', color: '#f59e0b', name: 'Out' },
+            ]}
+            unit=" KB/s"
+            timeframe={timeframe}
+          />
+          <PerfGraph
+            title={hasDiskIo ? 'Disk I/O' : 'Disk Usage'}
+            data={chartData}
+            series={hasDiskIo
+              ? [
+                { key: 'diskread', color: '#06b6d4', name: 'Read' },
+                { key: 'diskwrite', color: '#f97316', name: 'Write' },
+              ]
+              : [{ key: 'diskPct', color: '#06b6d4', name: 'Disk %' }]}
+            unit={hasDiskIo ? ' KB/s' : '%'}
+            yMax={hasDiskIo ? undefined : 100}
+            timeframe={timeframe}
+          />
+        </div>
+      )}
+
+      {/* VMs on this node */}
+      <div>
+        <h3 className="text-sm font-semibold text-white mb-3">
+          VMs &amp; Containers on {node.node} ({vms.length})
+        </h3>
+        {vms.length === 0 ? (
+          <Empty>No VMs or containers on this node.</Empty>
+        ) : (
+          <VmsTab
+            vms={vms}
+            actionLoading={actionLoading}
+            onAction={onVmAction}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  sub,
+  pct,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  sub: string
+  pct?: number
+}) {
+  const color = pct != null
+    ? pct > 85 ? 'bg-danger' : pct > 65 ? 'bg-warning' : 'bg-accent-dim'
+    : 'bg-accent-dim'
+
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-muted text-xs">
+          {icon}
+          {label}
+        </div>
+        {pct != null && (
+          <span className="text-xs font-mono text-muted">{pct}%</span>
+        )}
+      </div>
+      <div>
+        <div className="text-lg font-semibold text-white leading-tight">{value}</div>
+        <div className="text-xs text-muted">{sub}</div>
+      </div>
+      {pct != null && (
+        <div className="h-1 bg-surface-4 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+type ChartPoint = {
+  time: number
+  [key: string]: number | null
+}
+
+function PerfGraph({
+  title,
+  data,
+  series,
+  unit,
+  yMax,
+  timeframe,
+}: {
+  title: string
+  data: ChartPoint[]
+  series: { key: string; color: string; name: string }[]
+  unit: string
+  yMax?: number
+  timeframe: Timeframe
+}) {
+  function fmtTick(time: number) {
+    const d = new Date(time * 1000)
+    if (timeframe === 'hour') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (timeframe === 'day') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-300">{title}</span>
+        <div className="flex gap-3">
+          {series.map((s) => (
+            <span key={s.key} className="flex items-center gap-1 text-xs text-muted">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+              {s.name}
+            </span>
+          ))}
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={140}>
+        <AreaChart data={data} margin={{ top: 2, right: 4, bottom: 0, left: 0 }}>
+          <defs>
+            {series.map((s) => (
+              <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={s.color} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={s.color} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+          <XAxis
+            dataKey="time"
+            tickFormatter={fmtTick}
+            tick={{ fontSize: 10, fill: '#6b7280' }}
+            tickLine={false}
+            axisLine={false}
+            interval="preserveStartEnd"
+          />
+          <YAxis
+            domain={[0, yMax ?? 'auto']}
+            tick={{ fontSize: 10, fill: '#6b7280' }}
+            tickLine={false}
+            axisLine={false}
+            width={36}
+            tickFormatter={(v: number) => `${v}${unit.trim()}`}
+          />
+          <RechartsTooltip
+            contentStyle={{
+              backgroundColor: '#1a1f2e',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '6px',
+              fontSize: '11px',
+              color: '#e5e7eb',
+            }}
+            formatter={(value: number, name: string) => [`${value}${unit}`, name]}
+            labelFormatter={(label: number) => new Date(label * 1000).toLocaleString()}
+          />
+          {series.map((s) => (
+            <Area
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              stroke={s.color}
+              strokeWidth={1.5}
+              fill={`url(#grad-${s.key})`}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ── Tree Tab ───────────────────────────────────────────────────────────────────
+
+function TreeTab({
+  instanceId,
+  vms,
+  onSelectNode,
+}: {
+  instanceId: string
+  vms: ProxmoxVM[]
+  onSelectNode: (nodeName: string) => void
+}) {
+  const proxmox = api.proxmox(instanceId)
+  const [resources, setResources] = useState<ProxmoxResource[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    setLoading(true)
+    proxmox.clusterResources()
+      .then((r) => {
+        setResources(r.resources)
+        // Expand all nodes by default
+        const nodeNames = r.resources
+          .filter((res) => res.type === 'node')
+          .map((res) => res.name ?? res.id)
+        setExpandedNodes(new Set(nodeNames))
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load tree'))
+      .finally(() => setLoading(false))
+  }, [instanceId])
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-muted text-sm py-8 justify-center">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Loading tree…
+      </div>
+    )
+  }
+  if (error) return <SectionError message={error} />
+
+  const getNodeName = (res: ProxmoxResource): string => {
+    if (res.node) return res.node
+    if (res.name) return res.name
+    if (res.id?.startsWith('node/')) return res.id.slice('node/'.length)
+    return res.id
+  }
+
+  // Group by node
+  const nodeResources = resources
+    .filter((r) => r.type === 'node')
+    .sort((a, b) => getNodeName(a).localeCompare(getNodeName(b), undefined, { numeric: true, sensitivity: 'base' }))
+  const vmResources = resources.filter((r) => r.type === 'vm' || r.type === 'qemu' || r.type === 'lxc')
+  const storageResources = resources.filter((r) => r.type === 'storage')
+
+  // Also include vms that may have been loaded on the main view
+  // Use cluster resources if available, fall back to vms prop
+  const getNodeVms = (nodeName: string) => {
+    const fromResources = vmResources.filter((r) => (r.node ?? '') === nodeName)
+    if (fromResources.length > 0) {
+      return [...fromResources].sort((a, b) => {
+        const nameCmp = (a.name ?? '').localeCompare((b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+        if (nameCmp !== 0) return nameCmp
+        return (a.vmid ?? 0) - (b.vmid ?? 0)
+      })
+    }
+    return vms
+      .filter((v) => v.node === nodeName)
+      .map((v) => ({
+        id: `${v.type}/${v.vmid}`,
+        type: v.type as 'vm' | 'lxc',
+        node: v.node,
+        vmid: v.vmid,
+        name: v.name,
+        status: v.status,
+        cpu: v.cpu,
+        maxcpu: v.cpus,
+        mem: v.mem,
+        maxmem: v.maxmem,
+        uptime: v.uptime,
+      }))
+      .sort((a, b) => {
+        const nameCmp = (a.name ?? '').localeCompare((b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+        if (nameCmp !== 0) return nameCmp
+        return (a.vmid ?? 0) - (b.vmid ?? 0)
+      })
+  }
+
+  const getNodeStorage = (nodeName: string) => storageResources.filter((r) => r.node === nodeName)
+
+  function toggleNode(name: string) {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) {
+        next.delete(name)
+      } else {
+        next.add(name)
+      }
+      return next
+    })
+  }
+
+  // Detect cluster name from resources if present
+  const clusterRes = resources.find((r) => r.type as string === 'cluster')
+  const clusterName = clusterRes ? (clusterRes.name ?? 'Cluster') : 'Proxmox Cluster'
+
+  // Summary counts
+  const totalVms = vmResources.length || vms.length
+  const runningVms = vmResources.filter((r) => r.status === 'running').length ||
+    vms.filter((v) => v.status === 'running').length
+
+  return (
+    <div className="space-y-2">
+      {/* Cluster root */}
+      <div className="card p-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+          <Server className="w-4 h-4 text-accent" />
+          <span>{clusterName}</span>
+          <span className="text-xs text-muted font-normal ml-1">
+            {nodeResources.length} node{nodeResources.length !== 1 ? 's' : ''} · {totalVms} VM/CT ({runningVms} running)
+          </span>
+        </div>
+      </div>
+
+      {/* Nodes */}
+      <div className="space-y-1 ml-4">
+        {nodeResources.map((nodeRes) => {
+          const nodeName = getNodeName(nodeRes)
+          const expanded = expandedNodes.has(nodeName)
+          const nodeVms = getNodeVms(nodeName)
+          const nodeStorage = getNodeStorage(nodeName)
+          const online = nodeRes.status === 'online'
+          const nodeCpuPct = nodeRes.cpu != null && nodeRes.maxcpu != null
+            ? Math.round((nodeRes.cpu / nodeRes.maxcpu) * 100)
+            : null
+          const nodeMemPct = nodeRes.mem != null && nodeRes.maxmem != null && nodeRes.maxmem > 0
+            ? Math.round((nodeRes.mem / nodeRes.maxmem) * 100)
+            : null
+
+          return (
+            <div key={nodeRes.id} className="space-y-0.5">
+              {/* Node row */}
+              <div className="flex items-center gap-1 group">
+                <button
+                  onClick={() => toggleNode(nodeName)}
+                  className="p-0.5 text-muted hover:text-gray-300 transition-colors"
+                >
+                  <ChevronRight
+                    className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                  />
+                </button>
+                <div
+                  className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded hover:bg-surface-3/50 cursor-pointer transition-colors"
+                  onClick={() => onSelectNode(nodeName)}
+                >
+                  <Server className={`w-3.5 h-3.5 ${online ? 'text-accent' : 'text-muted'}`} />
+                  <span className="text-sm font-medium text-gray-200">{nodeName}</span>
+                  <span className={online ? 'badge-ok text-[10px]' : 'badge-error text-[10px]'}>
+                    {nodeRes.status}
+                  </span>
+                  {nodeCpuPct != null && (
+                    <span className="text-xs text-muted ml-1">CPU {nodeCpuPct}%</span>
+                  )}
+                  {nodeMemPct != null && (
+                    <span className="text-xs text-muted">RAM {nodeMemPct}%</span>
+                  )}
+                  <span className="text-xs text-muted ml-auto">
+                    {nodeVms.length} VM/CT
+                  </span>
+                  <ExternalLink className="w-3 h-3 text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </div>
+
+              {/* Expanded children */}
+              {expanded && (
+                <div className="ml-8 space-y-0.5">
+                  {nodeVms.length === 0 && nodeStorage.length === 0 ? (
+                    <div className="text-xs text-muted px-2 py-1">No VMs or containers</div>
+                  ) : (
+                    <>
+                      {nodeVms.map((vm) => {
+                        const running = vm.status === 'running'
+                        const cpuPct = vm.cpu != null && vm.maxcpu != null && vm.maxcpu > 0
+                          ? Math.round((vm.cpu / vm.maxcpu) * 100)
+                          : vm.cpu != null ? Math.round(vm.cpu * 100)
+                          : null
+                        const memPct = vm.mem != null && vm.maxmem != null && vm.maxmem > 0
+                          ? Math.round((vm.mem / vm.maxmem) * 100)
+                          : null
+
+                        return (
+                          <div
+                            key={vm.id}
+                            className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-3/30 text-xs"
+                          >
+                            <span className="w-3 h-3 text-center text-muted">
+                              {vm.type === 'lxc' ? '⬡' : '▣'}
+                            </span>
+                            <span className="font-mono text-muted w-12">{vm.vmid ?? '—'}</span>
+                            <span className={`font-medium ${running ? 'text-gray-200' : 'text-muted'}`}>
+                              {vm.name ?? `${vm.type}/${vm.vmid}`}
+                            </span>
+                            <span className="badge bg-surface-4 text-muted text-[10px]">{vm.type}</span>
+                            <StatusBadge status={vm.status ?? 'unknown'} />
+                            {running && cpuPct != null && (
+                              <span className="text-muted ml-1">CPU {cpuPct}%</span>
+                            )}
+                            {running && memPct != null && (
+                              <span className="text-muted">RAM {memPct}%</span>
+                            )}
+                            {running && vm.uptime != null && (
+                              <span className="text-muted ml-auto">{fmtUptime(vm.uptime)}</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {nodeStorage.length > 0 && (
+                        <div className="mt-1 pt-1 border-t border-surface-4/30">
+                          {nodeStorage.map((s) => {
+                            const pct = s.disk != null && s.maxdisk != null && s.maxdisk > 0
+                              ? Math.round((s.disk / s.maxdisk) * 100)
+                              : null
+                            return (
+                              <div key={s.id} className="flex items-center gap-2 px-2 py-1 text-xs text-muted">
+                                <Database className="w-3 h-3" />
+                                <span className="font-medium">{s.name ?? s.id}</span>
+                                {pct != null && <span>{pct}% used</span>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Nodes tab ──────────────────────────────────────────────────────────────────
 
-function NodesTab({ nodes, error }: { nodes: ProxmoxNode[]; error?: string }) {
+function NodesTab({
+  nodes,
+  error,
+  onSelectNode,
+}: {
+  nodes: ProxmoxNode[]
+  error?: string
+  onSelectNode: (node: ProxmoxNode) => void
+}) {
   if (error) return <SectionError message={error} />
   if (nodes.length === 0) return <Empty>No nodes found.</Empty>
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
       {nodes.map((node) => (
-        <NodeCard key={node.node} node={node} />
+        <NodeCard key={node.node} node={node} onSelect={() => onSelectNode(node)} />
       ))}
     </div>
   )
 }
 
-function NodeCard({ node }: { node: ProxmoxNode }) {
+function NodeCard({ node, onSelect }: { node: ProxmoxNode; onSelect: () => void }) {
   const online = node.status === 'online'
   const cpuPct = Math.round(node.cpu * 100)
   const memPct = node.maxmem > 0 ? Math.round((node.mem / node.maxmem) * 100) : 0
   const diskPct = node.maxdisk > 0 ? Math.round((node.disk / node.maxdisk) * 100) : 0
 
   return (
-    <div className="card p-4 space-y-3">
+    <button
+      onClick={onSelect}
+      className="card p-4 space-y-3 text-left hover:border-accent/50 hover:bg-surface-3/50 transition-colors cursor-pointer w-full"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-muted" />
           <span className="font-medium text-sm text-white">{node.node}</span>
         </div>
-        <span className={online ? 'badge-ok' : 'badge-error'}>
-          {online ? 'online' : 'offline'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={online ? 'badge-ok' : 'badge-error'}>
+            {online ? 'online' : 'offline'}
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-muted" />
+        </div>
       </div>
 
       {online && (
@@ -204,7 +893,7 @@ function NodeCard({ node }: { node: ProxmoxNode }) {
           </div>
         </div>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -246,11 +935,11 @@ function VmsTab({
     .sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
-        case 'name':    cmp = (a.name ?? '').localeCompare(b.name ?? ''); break
+        case 'name':    cmp = (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true, sensitivity: 'base' }); break
         case 'vmid':    cmp = a.vmid - b.vmid; break
-        case 'node':    cmp = a.node.localeCompare(b.node); break
-        case 'type':    cmp = a.type.localeCompare(b.type); break
-        case 'status':  cmp = a.status.localeCompare(b.status); break
+        case 'node':    cmp = a.node.localeCompare(b.node, undefined, { numeric: true, sensitivity: 'base' }); break
+        case 'type':    cmp = a.type.localeCompare(b.type, undefined, { numeric: true, sensitivity: 'base' }); break
+        case 'status':  cmp = a.status.localeCompare(b.status, undefined, { numeric: true, sensitivity: 'base' }); break
         case 'cpu':     cmp = (a.cpu ?? 0) - (b.cpu ?? 0); break
         case 'mem':     cmp = a.mem - b.mem; break
         case 'uptime':  cmp = a.uptime - b.uptime; break
@@ -342,7 +1031,6 @@ function VmRow({
 }) {
   const running = vm.status === 'running'
   const cpuPct = Math.round((vm.cpu ?? 0) * 100)
-  const memPct = vm.maxmem > 0 ? Math.round((vm.mem / vm.maxmem) * 100) : 0
   const isActing = actionLoading?.startsWith(`${vm.node}-${vm.vmid}`)
 
   return (
@@ -520,3 +1208,4 @@ function fmtUptime(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
 }
+

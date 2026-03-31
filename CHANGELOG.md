@@ -6,6 +6,30 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.03.31-03] — 2026-03-31
+
+### Added
+
+#### Proxmox — host drill-down dashboard
+- Proxmox node cards in the main Proxmox view are now clickable and open a dedicated host detail screen
+- Host detail includes a timeframe selector (`hour`, `day`, `week`, `month`) and time-series charts for CPU, memory, network, and disk metrics
+- Added new Proxmox backend endpoints for RRD data:
+  - `GET /api/plugins/proxmox/nodes/{node}/rrddata`
+  - `GET /api/plugins/proxmox/nodes/{node}/qemu/{vmid}/rrddata`
+  - `GET /api/plugins/proxmox/nodes/{node}/lxc/{vmid}/rrddata`
+
+#### Proxmox — cluster topology tree
+- Added a new Tree View tab in the Proxmox frontend to display node → VM/CT hierarchy
+- Added backend topology endpoint: `GET /api/plugins/proxmox/cluster/resources`
+- Backend now aggregates cluster resources by type and deduplicates results for more consistent rendering across single-node and clustered Proxmox setups
+
+### Fixed
+- **Proxmox tree view empty state**: normalized resource type handling (`qemu`, `vm`, `lxc`) and node name derivation (`node`, `name`, `id`) so tree nodes and children attach correctly
+- **Proxmox host charts with missing memory/disk series**: added fallback metric key handling for multiple RRD field variants (including memory and root disk usage fields) and automatic disk chart fallback from I/O to disk usage when I/O series are unavailable
+- **Proxmox sorting consistency**: VM lists and tree children now use numeric-aware, case-insensitive alphabetical sorting with VMID numeric tie-breaks, preventing incorrect orders like `1000` before `100`
+
+---
+
 ## [2026.03.31-02] — 2026-03-31
 
 ### Added

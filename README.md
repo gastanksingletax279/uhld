@@ -37,7 +37,7 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | TOTP 2FA (Google Authenticator, Authy) | ✅ Complete |
 | Passkeys / WebAuthn (YubiKey, Touch ID, Face ID, Windows Hello) | ✅ Complete |
 | OAuth / OIDC (Entra ID, Google, GitHub) | ✅ Complete |
-| Proxmox VE plugin (nodes, VMs, storage, start/stop/reboot) | ✅ Complete |
+| Proxmox VE plugin (nodes, host drill-down, VM/CT topology tree, performance graphs, start/stop/reboot) | ✅ Complete |
 | AdGuard Home plugin (stats, query log, protection toggle) | ✅ Complete |
 | Pi-hole plugin (stats, query log, blocking toggle) | ✅ Complete |
 | Tailscale plugin (devices, users, DNS, ACL editor, sidecar status) | ✅ Complete |
