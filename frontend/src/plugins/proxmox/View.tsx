@@ -1,6 +1,17 @@
+// ── Note on Console Access ───────────────────────────────────────────────────────────
+// QEMU VMs support VNC console access via Proxmox API. However, VNC authentication
+// is required for many VMs. Until the authentication method is researched and
+// implemented, console buttons are disabled. See backend comment in api.py for details.
+//
+// To enable:
+// 1. Add VNC password to VM in Proxmox VE GUI, or
+// 2. Implement proxy-based authentication via backend
+//
+// ───────────────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useState } from 'react'
 import { api, ProxmoxNode, ProxmoxVM } from '../../api/client'
-import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react'
+import { RefreshCw, Play, Square, RotateCcw, Loader2, AlertCircle, Server, ExternalLink, ChevronUp, ChevronDown, Monitor } from 'lucide-react'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 
 type Tab = 'nodes' | 'vms' | 'storage'

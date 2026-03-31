@@ -117,6 +117,15 @@ export const api = {
         request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/shutdown?vm_type=${type}`, { method: 'POST' }),
       rebootVm: (node: string, vmid: number, type = 'qemu') =>
         request<{ task: string }>(`${p}/nodes/${node}/vms/${vmid}/reboot?vm_type=${type}`, { method: 'POST' }),
+      consoleTicket: (node: string, vmid: number, type = 'qemu') =>
+        request<{ port: number; host: string; vm_type: string }>(
+          `${p}/nodes/${node}/vms/${vmid}/console?vm_type=${type}`, { method: 'POST' }
+        ),
+      consoleWsUrl: (host: string, port: number) => {
+        // Connect directly to Proxmox VNC socket: ws://host:5900+vmid
+        const wsProto = host.startsWith('http') || host.startsWith('wss') ? 'ws' : 'ws'
+        return `${wsProto}://${host}:${port}`
+      },
     }
   },
 
@@ -187,8 +196,11 @@ export const api = {
   docker: (instanceId = 'default') => {
     const p = instanceId === 'default' ? '/api/plugins/docker' : `/api/plugins/docker/${instanceId}`
     return {
+      info:       () => request<DockerInfo>(`${p}/info`),
+      events:     (since?: number) => request<{ events: DockerEvent[] }>(`${p}/events${since ? `?since=${since}` : ''}`),
       containers: () => request<{ containers: DockerContainer[] }>(`${p}/containers`),
       images:     () => request<{ images: DockerImage[] }>(`${p}/images`),
+      stats:      (id: string) => request<DockerStats>(`${p}/containers/${id}/stats`),
       start:      (id: string) => request<{ message: string }>(`${p}/containers/${id}/start`,   { method: 'POST' }),
       stop:       (id: string) => request<{ message: string }>(`${p}/containers/${id}/stop`,    { method: 'POST' }),
       restart:    (id: string) => request<{ message: string }>(`${p}/containers/${id}/restart`, { method: 'POST' }),
@@ -199,6 +211,11 @@ export const api = {
         const base = p.replace(/^\/api/, '')
         const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
         return `${wsProto}://${window.location.host}/api${base}/containers/${encodeURIComponent(containerId)}/exec?cmd=${encodeURIComponent(cmd)}`
+      },
+      logsWsUrl:  (containerId: string) => {
+        const base = p.replace(/^\/api/, '')
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        return `${wsProto}://${window.location.host}/api${base}/containers/${encodeURIComponent(containerId)}/logs/stream`
       },
     }
   },
@@ -545,6 +562,39 @@ export interface TailscaleLocalStatus {
 }
 
 // --- Docker types ---
+
+export interface DockerInfo {
+  server_version: string
+  os: string
+  kernel: string
+  arch: string
+  cpus: number
+  mem_total: number
+  containers: number
+  containers_running: number
+  containers_paused: number
+  containers_stopped: number
+  images: number
+  storage_driver: string
+  logging_driver: string
+  name: string
+}
+
+export interface DockerEvent {
+  Type: string
+  Action: string
+  Actor: { ID: string; Attributes: Record<string, string> }
+  time: number
+}
+
+export interface DockerStats {
+  cpu_pct: number
+  mem_usage: number
+  mem_limit: number
+  mem_pct: number
+  net_rx: number
+  net_tx: number
+}
 
 export interface DockerPort {
   ip: string

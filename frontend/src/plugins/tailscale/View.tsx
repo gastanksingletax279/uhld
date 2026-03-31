@@ -51,6 +51,7 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
   const [aclValidationError, setAclValidationError] = useState<string | null>(null)
   const [aclValidating, setAclValidating] = useState(false)
   const [aclValidateResult, setAclValidateResult] = useState<{ valid: boolean; message: string } | null>(null)
+  const [policyTags, setPolicyTags] = useState<string[]>([])
 
   // Keys
   const [keys, setKeys] = useState<TailscaleKey[]>([])
@@ -203,6 +204,16 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
       }
     } else if (action === 'tags') {
       setDeviceModal({ type: 'tags', device, tags: [...(device.tags ?? [])], input: '' })
+      const parseTagsFromAcl = (text: string) =>
+        [...new Set(Array.from(text.matchAll(/"(tag:[a-zA-Z0-9_-]+)"/g)).map((m) => m[1]))].sort()
+      if (aclLoaded && acl) {
+        setPolicyTags(parseTagsFromAcl(acl))
+      } else {
+        tailscale.acl().then((text) => {
+          setAcl(text); setAclLoaded(true)
+          setPolicyTags(parseTagsFromAcl(text))
+        }).catch(() => {})
+      }
     }
   }
 
@@ -724,6 +735,26 @@ export function TailscaleView({ instanceId = 'default' }: { instanceId?: string 
                     }}
                   >Add</button>
                 </div>
+                {policyTags.length > 0 && (() => {
+                  const inputLower = deviceModal.input.toLowerCase().replace(/^tag:/, '')
+                  const suggestions = policyTags.filter(
+                    (t) => !deviceModal.tags.includes(t) && (inputLower === '' || t.replace(/^tag:/, '').includes(inputLower))
+                  )
+                  return suggestions.length > 0 ? (
+                    <div>
+                      <p className="text-[10px] text-muted/70 uppercase tracking-wider mb-1">Policy tags</p>
+                      <div className="flex flex-wrap gap-1">
+                        {suggestions.map((tag) => (
+                          <button
+                            key={tag}
+                            className="px-1.5 py-0.5 rounded text-xs bg-accent-dim/20 text-accent hover:bg-accent-dim/40 transition-colors"
+                            onClick={() => setDeviceModal({ ...deviceModal, tags: [...deviceModal.tags, tag], input: '' })}
+                          >{tag}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                })()}
                 <p className="text-xs text-muted">Tags must exist in your ACL policy file.</p>
               </div>
             )}

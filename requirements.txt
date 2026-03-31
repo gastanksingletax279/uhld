@@ -15,6 +15,10 @@ typer==0.13.1
 rich==13.9.4
 python-multipart==0.0.22
 # Plugin dependencies
+websockets>=12.0
 proxmoxer==2.0.1
 requests==2.33.0
 kubernetes>=29.0.0
+# noVNC WebSocket proxy for VNC console access
+# Available versions: 0.99.9, 1.0.1, 1.0.2, 1.0.5, 1.1.6, 1.2.6, 1.3.0
+novnc>=1.3.0

@@ -13,5 +13,5 @@ export function PluginViewPage() {
     )
   }
 
-  return <View instanceId={instanceId} />
+  return <View key={`${pluginId}:${instanceId}`} instanceId={instanceId} />
 }

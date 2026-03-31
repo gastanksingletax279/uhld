@@ -309,6 +309,139 @@ class DockerPlugin(PluginBase):
 
         await asyncio.gather(docker_to_ws(), ws_to_docker(), return_exceptions=True)
 
+    async def _fetch_info(self) -> dict:
+        resp = await self._get_client().get(self._url("/info"))
+        resp.raise_for_status()
+        d = resp.json()
+        return {
+            "server_version": d.get("ServerVersion", ""),
+            "os": d.get("OperatingSystem", ""),
+            "kernel": d.get("KernelVersion", ""),
+            "arch": d.get("Architecture", ""),
+            "cpus": d.get("NCPU", 0),
+            "mem_total": d.get("MemTotal", 0),
+            "containers": d.get("Containers", 0),
+            "containers_running": d.get("ContainersRunning", 0),
+            "containers_paused": d.get("ContainersPaused", 0),
+            "containers_stopped": d.get("ContainersStopped", 0),
+            "images": d.get("Images", 0),
+            "storage_driver": d.get("Driver", ""),
+            "logging_driver": d.get("LoggingDriver", ""),
+            "name": d.get("Name", ""),
+        }
+
+    async def _fetch_events(self, since: int = 0) -> list[dict]:
+        import json as _json
+        import time as _time
+        now = int(_time.time())
+        if not since:
+            since = now - 3600
+        resp = await self._get_client().get(self._url(f"/events?since={since}&until={now}"))
+        resp.raise_for_status()
+        events = []
+        for line in resp.text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(_json.loads(line))
+            except Exception:
+                pass
+        return list(reversed(events[-50:]))
+
+    async def _fetch_container_stats(self, container_id: str) -> dict:
+        resp = await self._get_client().get(
+            self._url(f"/containers/{container_id}/stats?stream=false&one-shot=true")
+        )
+        resp.raise_for_status()
+        d = resp.json()
+        cpu_delta = (
+            d["cpu_stats"]["cpu_usage"]["total_usage"]
+            - d["precpu_stats"]["cpu_usage"]["total_usage"]
+        )
+        system_delta = (
+            d["cpu_stats"].get("system_cpu_usage", 0)
+            - d["precpu_stats"].get("system_cpu_usage", 0)
+        )
+        num_cpus = d["cpu_stats"].get("online_cpus") or len(
+            d["cpu_stats"]["cpu_usage"].get("percpu_usage") or [0]
+        )
+        cpu_pct = (cpu_delta / system_delta) * num_cpus * 100.0 if system_delta > 0 else 0.0
+        mem_usage = d["memory_stats"].get("usage", 0)
+        mem_limit = d["memory_stats"].get("limit", 0)
+        mem_cache = (d["memory_stats"].get("stats") or {}).get("cache", 0)
+        mem_actual = max(mem_usage - mem_cache, 0)
+        mem_pct = (mem_actual / mem_limit * 100.0) if mem_limit > 0 else 0.0
+        net_rx = net_tx = 0
+        for iface in (d.get("networks") or {}).values():
+            net_rx += iface.get("rx_bytes", 0)
+            net_tx += iface.get("tx_bytes", 0)
+        return {
+            "cpu_pct": round(cpu_pct, 2),
+            "mem_usage": mem_actual,
+            "mem_limit": mem_limit,
+            "mem_pct": round(mem_pct, 2),
+            "net_rx": net_rx,
+            "net_tx": net_tx,
+        }
+
+    async def _stream_container_logs(self, container_id: str, websocket) -> None:
+        import asyncio as _asyncio
+        await websocket.accept()
+        client = self._make_client()
+        try:
+            url = self._url(
+                f"/containers/{container_id}/logs?stdout=1&stderr=1&follow=1&timestamps=1&tail=100"
+            )
+            async with client.stream("GET", url) as response:
+                stop = _asyncio.Event()
+                buf = b""
+
+                async def _stream() -> None:
+                    nonlocal buf
+                    try:
+                        async for chunk in response.aiter_bytes():
+                            if stop.is_set():
+                                break
+                            buf += chunk
+                            while len(buf) >= 8:
+                                frame_size = int.from_bytes(buf[4:8], "big")
+                                if len(buf) < 8 + frame_size:
+                                    break
+                                line = buf[8: 8 + frame_size].decode("utf-8", errors="replace")
+                                buf = buf[8 + frame_size:]
+                                try:
+                                    await websocket.send_text(line)
+                                except Exception:
+                                    stop.set()
+                                    return
+                    except Exception:
+                        pass
+                    finally:
+                        stop.set()
+
+                async def _watch() -> None:
+                    try:
+                        async for _ in websocket.iter_text():
+                            pass
+                    except Exception:
+                        pass
+                    finally:
+                        stop.set()
+
+                await _asyncio.gather(_stream(), _watch(), return_exceptions=True)
+        except Exception as exc:
+            try:
+                await websocket.send_text(f"Error: {exc}")
+            except Exception:
+                pass
+        finally:
+            await client.aclose()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
     async def _fetch_container_logs(self, container_id: str, tail: int = 100) -> str:
         resp = await self._get_client().get(
             self._url(f"/containers/{container_id}/logs?stdout=1&stderr=1&tail={tail}&timestamps=1")

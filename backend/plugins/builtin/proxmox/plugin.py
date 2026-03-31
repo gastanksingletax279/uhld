@@ -202,6 +202,39 @@ class ProxmoxPlugin(PluginBase):
             self._reset_client()
             return {"status": "error", "message": str(exc)}
 
+    async def get_auth_headers(self) -> dict[str, str]:
+        """Return HTTP headers needed to authenticate directly with the Proxmox API.
+
+        Token auth → Authorization header.
+        Password auth → fresh PVEAuthCookie (obtained via /access/ticket).
+        Used by the console WebSocket proxy to forward auth to Proxmox.
+        """
+        import httpx
+
+        host = self._config.get("host", "")
+        port = int(self._config.get("port", 8006))
+        verify_ssl = bool(self._config.get("verify_ssl", False))
+        username = self._config.get("username", "")
+
+        token_name = self._config.get("token_name", "").strip()
+        token_value = self._config.get("token_value", "").strip()
+
+        if token_name and token_value:
+            return {"Authorization": f"PVEAPIToken={username}!{token_name}={token_value}"}
+
+        password = self._config.get("password", "")
+        async with httpx.AsyncClient(verify=verify_ssl) as client:
+            r = await client.post(
+                f"https://{host}:{port}/api2/json/access/ticket",
+                data={"username": username, "password": password},
+            )
+            r.raise_for_status()
+            data = r.json()["data"]
+            return {
+                "Cookie": f"PVEAuthCookie={data['ticket']}",
+                "CSRFPreventionToken": data["CSRFPreventionToken"],
+            }
+
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.proxmox.api import make_router
         return make_router(self)

@@ -13,6 +13,21 @@ if TYPE_CHECKING:
 def make_router(plugin: DockerPlugin) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/info")
+    async def get_info():
+        try:
+            return await plugin._fetch_info()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/events")
+    async def get_events(since: int = 0):
+        try:
+            events = await plugin._fetch_events(since)
+            return {"events": events}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     @router.get("/containers")
     async def list_containers():
         try:
@@ -48,6 +63,17 @@ def make_router(plugin: DockerPlugin) -> APIRouter:
             return await plugin._fetch_container_logs(container_id, tail)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/containers/{container_id}/stats")
+    async def container_stats(container_id: str):
+        try:
+            return await plugin._fetch_container_stats(container_id)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.websocket("/containers/{container_id}/logs/stream")
+    async def stream_logs(container_id: str, websocket: WebSocket):
+        await plugin._stream_container_logs(container_id, websocket)
 
     @router.get("/images")
     async def list_images():

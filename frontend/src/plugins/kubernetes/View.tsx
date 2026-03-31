@@ -245,6 +245,18 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     return () => { ws.close(); logsWsRef.current = null }
   }, [logsTail, logsModal?.namespace, logsModal?.pod, logsModal?.container])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Auto-refresh pods when any are in a non-running state ────────────────
+  const NON_RUNNING = new Set(['Pending', 'Unknown', 'Failed'])
+  function hasUnhealthyPod(data: K8sPod[]) {
+    return data.some((p) => NON_RUNNING.has(p.status) || p.status.toLowerCase().includes('back'))
+  }
+  useEffect(() => {
+    if (tab !== 'pods' || !pods.loaded) return
+    if (!hasUnhealthyPod(pods.data)) return
+    const id = setInterval(() => loadTab('pods', nsFilter, true), 10_000)
+    return () => clearInterval(id)
+  }, [tab, pods.loaded, pods.data, nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
+
   function applyNsFilter(ns: string) {
     setNsFilter(ns)
     if (NS_TABS.has(tab)) loadTab(tab, ns)

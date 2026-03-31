@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
+import urllib.parse
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException
+import websockets
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
     from backend.plugins.builtin.proxmox.plugin import ProxmoxPlugin
@@ -193,5 +196,122 @@ def make_router(plugin: ProxmoxPlugin) -> APIRouter:
             return {"tasks": tasks[:limit]}
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Console (VNC for QEMU) ─────────────────────────────
+    # DISABLED: Console access requires VNC password research
+    # TODO: Re-enable when VNC socket authentication is properly configured
+    #
+    # @router.post("/nodes/{node}/vms/{vmid}/console")
+    # async def create_console(node: str, vmid: int, vm_type: str = "qemu"):
+    #     """
+    #     Create a console for a QEMU VM using direct VNC socket access.
+    #     Returns: { port, host, vm_type }
+    #
+    #     For QEMU VMs: Connect directly to TCP VNC socket at host:5900+vmid
+    #     For LXC: Console access not supported via API (requires SSH/serial access)
+    #     """
+    #     if vm_type == "lxc":
+    #         raise HTTPException(
+    #             status_code=405,
+    #             detail="Console access for LXC containers is not supported via VNC. "
+    #             "Use SSH or serial console access instead."
+    #         )
+    #
+    #     try:
+    #         host = plugin._config.get("host", "")
+    #         port = int(plugin._config.get("port", 8006))
+    #
+    #         # For QEMU VMs, connect directly to the VNC socket
+    #         # VNC port is 5900 + vmid offset
+    #         vnc_port = 5900 + vmid
+    #         return {
+    #             "port": vnc_port,
+    #             "host": host,
+    #             "vm_type": "qemu",
+    #             "auth_required": not bool(plugin._config.get("verify_ssl", False))
+    #         }
+    #     except Exception as exc:
+    #         logger.error("Proxmox console setup error: %s", exc)
+    #         raise HTTPException(status_code=502, detail=str(exc))
+    #
+    # @router.websocket("/nodes/{node}/vms/{vmid}/console/ws")
+    # async def console_ws(
+    #     websocket: WebSocket,
+    #     node: str,
+    #     vmid: int,
+    #     vm_type: str = "qemu",
+    #     port: int | None = None,
+    # ):
+    #     """
+    #     WebSocket proxy: browser (noVNC) ↔ UHLD backend ↔ Proxmox VNC socket.
+    #
+    #     Connects directly to Proxmox VNC TCP socket and streams VNC RFB protocol
+    #     to the browser via noVNC. Handles VNC RFB authentication (challenge-response).
+    #     """
+    #     if vm_type != "qemu":
+    #         await websocket.close(code=4004, reason="QEMU VMs only")
+    #         return
+    #
+    #     if port is None:
+    #         host = plugin._config.get("host", "")
+    #         port = 5900 + vmid
+    #
+    #     host = plugin._config.get("host", "")
+    #     verify_ssl = bool(plugin._config.get("verify_ssl", False))
+    #
+    #     # Calculate VNC port (5900 + vmid offset)
+    #     vnc_port = 5900 + vmid if port is None else port
+    #
+    #     # Build direct VNC socket URL
+    #     upstream = f"{host}:{vnc_port}"
+    #
+    #     ssl_ctx = ssl.create_default_context()
+    #     if not verify_ssl:
+    #         ssl_ctx.check_hostname = False
+    #         ssl_ctx.verify_mode = ssl.CERT_NONE
+    #
+    #     try:
+    #         # Connect directly to Proxmox VNC TCP socket
+    #         # VNC socket auth is handled by noVNC (RFB password challenge) or no auth if socket is open
+    #         async with websockets.connect(
+    #             upstream,
+    #             ssl=ssl_ctx,
+    #             max_size=None,
+    #         ) as upstream_ws:
+    #             # VNC RFB protocol is byte-oriented, stream directly
+    #             # noVNC in browser expects standard VNC protocol over WebSocket
+    #
+    #             async def from_browser():
+    #                 try:
+    #                     async for msg in websocket.iter_bytes():
+    #                         await upstream_ws.send(msg)
+    #                 except (WebSocketDisconnect, Exception):
+    #                     pass
+    #                 finally:
+    #                     try:
+    #                         await upstream_ws.close()
+    #                     except Exception:
+    #                         pass
+    #
+    #             async def from_proxmox():
+    #                 try:
+    #                     async for msg in upstream_ws:
+    #                         # VNC data is bytes, forward directly
+    #                         await websocket.send_bytes(msg if isinstance(msg, bytes) else msg.encode())
+    #                 except Exception:
+    #                     pass
+    #                 finally:
+    #                     try:
+    #                         await websocket.close()
+    #                     except Exception:
+    #                         pass
+    #
+    #             await asyncio.gather(from_browser(), from_proxmox())
+    #     except Exception as exc:
+    #         logger.error("Proxmox VNC WebSocket error: %s", exc)
+    #         try:
+    #             await websocket.close(code=1011, reason=str(exc))
+    #         except Exception:
+    #             pass
 
     return router

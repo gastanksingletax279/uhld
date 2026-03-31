@@ -78,7 +78,7 @@ function SidebarLink({
   to,
   icon,
   label,
-  exact = false,
+  exact = true,
   healthStatus,
 }: {
   to: string
