@@ -264,6 +264,26 @@ class KubernetesPlugin(PluginBase):
         from kubernetes import client  # type: ignore[import]
         return client.NetworkingV1Api(self._get_api_client())
 
+    def _autoscaling_v2(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.AutoscalingV2Api(self._get_api_client())
+
+    def _policy_v1(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.PolicyV1Api(self._get_api_client())
+
+    def _scheduling_v1(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.SchedulingV1Api(self._get_api_client())
+
+    def _storage_v1(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.StorageV1Api(self._get_api_client())
+
+    def _apiextensions_v1(self):
+        from kubernetes import client  # type: ignore[import]
+        return client.ApiextensionsV1Api(self._get_api_client())
+
     async def _fetch_deployments(self, namespace: str = "") -> list[dict]:
         apps = self._apps_v1()
         if namespace:
@@ -695,6 +715,239 @@ class KubernetesPlugin(PluginBase):
             "workloads": workloads,
             "events": events,
         }
+
+    async def _fetch_replicasets(self, namespace: str = "") -> list[dict]:
+        apps = self._apps_v1()
+        if namespace:
+            items = (await self._run(apps.list_namespaced_replica_set, namespace)).items
+        else:
+            items = (await self._run(apps.list_replica_set_for_all_namespaces)).items
+        result = []
+        for rs in items:
+            spec = rs.spec
+            st = rs.status
+            desired = (spec.replicas or 0) if spec else 0
+            ready = (st.ready_replicas or 0) if st else 0
+            # Determine owner (e.g. Deployment name)
+            owner = ""
+            for ref in (rs.metadata.owner_references or []):
+                if ref.kind == "Deployment":
+                    owner = ref.name
+                    break
+            result.append({
+                "name": rs.metadata.name,
+                "namespace": rs.metadata.namespace,
+                "desired": desired,
+                "ready": ready,
+                "owner": owner,
+                "created": _ts(rs.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_hpas(self, namespace: str = "") -> list[dict]:
+        auto = self._autoscaling_v2()
+        if namespace:
+            items = (await self._run(auto.list_namespaced_horizontal_pod_autoscaler, namespace)).items
+        else:
+            items = (await self._run(auto.list_horizontal_pod_autoscaler_for_all_namespaces)).items
+        result = []
+        for hpa in items:
+            spec = hpa.spec
+            st = hpa.status
+            target = ""
+            if spec and spec.scale_target_ref:
+                target = f"{spec.scale_target_ref.kind}/{spec.scale_target_ref.name}"
+            min_r = (spec.min_replicas or 1) if spec else 1
+            max_r = (spec.max_replicas or 0) if spec else 0
+            current = (st.current_replicas or 0) if st else 0
+            desired = (st.desired_replicas or 0) if st else 0
+            cpu_pct: int | None = None
+            for m in (st.current_metrics or []) if st else []:
+                if m.type == "Resource" and m.resource and m.resource.name == "cpu":
+                    if m.resource.current and m.resource.current.average_utilization is not None:
+                        cpu_pct = m.resource.current.average_utilization
+                        break
+            result.append({
+                "name": hpa.metadata.name,
+                "namespace": hpa.metadata.namespace,
+                "target": target,
+                "min_replicas": min_r,
+                "max_replicas": max_r,
+                "current_replicas": current,
+                "desired_replicas": desired,
+                "cpu_pct": cpu_pct,
+                "created": _ts(hpa.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_endpoints(self, namespace: str = "") -> list[dict]:
+        v1 = self._core_v1()
+        if namespace:
+            items = (await self._run(v1.list_namespaced_endpoints, namespace)).items
+        else:
+            items = (await self._run(v1.list_endpoints_for_all_namespaces)).items
+        result = []
+        for ep in items:
+            address_count = 0
+            port_strs: list[str] = []
+            for subset in (ep.subsets or []):
+                address_count += len(subset.addresses or [])
+                for p in (subset.ports or []):
+                    s = f"{p.port}/{p.protocol}"
+                    if s not in port_strs:
+                        port_strs.append(s)
+            result.append({
+                "name": ep.metadata.name,
+                "namespace": ep.metadata.namespace,
+                "addresses": address_count,
+                "ports": port_strs,
+                "created": _ts(ep.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_networkpolicies(self, namespace: str = "") -> list[dict]:
+        net = self._networking_v1()
+        if namespace:
+            items = (await self._run(net.list_namespaced_network_policy, namespace)).items
+        else:
+            items = (await self._run(net.list_network_policy_for_all_namespaces)).items
+        result = []
+        for np in items:
+            spec = np.spec
+            selector_labels: dict = {}
+            if spec and spec.pod_selector and spec.pod_selector.match_labels:
+                selector_labels = dict(spec.pod_selector.match_labels)
+            pod_selector = ", ".join(f"{k}={v}" for k, v in selector_labels.items()) if selector_labels else "<all>"
+            policy_types = list(spec.policy_types or []) if spec else []
+            result.append({
+                "name": np.metadata.name,
+                "namespace": np.metadata.namespace,
+                "pod_selector": pod_selector,
+                "policy_types": policy_types,
+                "created": _ts(np.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_resourcequotas(self, namespace: str = "") -> list[dict]:
+        v1 = self._core_v1()
+        if namespace:
+            items = (await self._run(v1.list_namespaced_resource_quota, namespace)).items
+        else:
+            items = (await self._run(v1.list_resource_quota_for_all_namespaces)).items
+        result = []
+        for rq in items:
+            hard = dict(rq.status.hard or {}) if rq.status else {}
+            used = dict(rq.status.used or {}) if rq.status else {}
+            limits = [
+                {"resource": k, "hard": hard.get(k, ""), "used": used.get(k, "")}
+                for k in sorted(hard.keys())
+            ]
+            result.append({
+                "name": rq.metadata.name,
+                "namespace": rq.metadata.namespace,
+                "limits": limits,
+                "created": _ts(rq.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_limitranges(self, namespace: str = "") -> list[dict]:
+        v1 = self._core_v1()
+        if namespace:
+            items = (await self._run(v1.list_namespaced_limit_range, namespace)).items
+        else:
+            items = (await self._run(v1.list_limit_range_for_all_namespaces)).items
+        result = []
+        for lr in items:
+            limits_count = len((lr.spec.limits or []) if lr.spec else [])
+            limit_types = sorted({lim.type for lim in (lr.spec.limits or []) if lim.type} if lr.spec else [])
+            result.append({
+                "name": lr.metadata.name,
+                "namespace": lr.metadata.namespace,
+                "limits_count": limits_count,
+                "limit_types": limit_types,
+                "created": _ts(lr.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_priorityclasses(self) -> list[dict]:
+        sched = self._scheduling_v1()
+        items = (await self._run(sched.list_priority_class)).items
+        result = []
+        for pc in items:
+            result.append({
+                "name": pc.metadata.name,
+                "value": pc.value or 0,
+                "global_default": bool(pc.global_default),
+                "preemption_policy": pc.preemption_policy or "PreemptLowerPriority",
+                "description": pc.description or "",
+                "created": _ts(pc.metadata.creation_timestamp),
+            })
+        result.sort(key=lambda x: x["value"], reverse=True)
+        return result
+
+    async def _fetch_pdbs(self, namespace: str = "") -> list[dict]:
+        pol = self._policy_v1()
+        if namespace:
+            items = (await self._run(pol.list_namespaced_pod_disruption_budget, namespace)).items
+        else:
+            items = (await self._run(pol.list_pod_disruption_budget_for_all_namespaces)).items
+        result = []
+        for pdb in items:
+            spec = pdb.spec
+            st = pdb.status
+            min_available = str(spec.min_available) if spec and spec.min_available is not None else ""
+            max_unavailable = str(spec.max_unavailable) if spec and spec.max_unavailable is not None else ""
+            result.append({
+                "name": pdb.metadata.name,
+                "namespace": pdb.metadata.namespace,
+                "min_available": min_available,
+                "max_unavailable": max_unavailable,
+                "current_healthy": (st.current_healthy or 0) if st else 0,
+                "desired_healthy": (st.desired_healthy or 0) if st else 0,
+                "disruptions_allowed": (st.disruptions_allowed or 0) if st else 0,
+                "expected_pods": (st.expected_pods or 0) if st else 0,
+                "created": _ts(pdb.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_storageclasses(self) -> list[dict]:
+        stor = self._storage_v1()
+        items = (await self._run(stor.list_storage_class)).items
+        result = []
+        for sc in items:
+            is_default = (sc.metadata.annotations or {}).get(
+                "storageclass.kubernetes.io/is-default-class", "false"
+            ) == "true"
+            result.append({
+                "name": sc.metadata.name,
+                "provisioner": sc.provisioner or "",
+                "reclaim_policy": sc.reclaim_policy or "Delete",
+                "volume_binding_mode": sc.volume_binding_mode or "Immediate",
+                "allow_volume_expansion": bool(sc.allow_volume_expansion),
+                "is_default": is_default,
+                "created": _ts(sc.metadata.creation_timestamp),
+            })
+        return result
+
+    async def _fetch_crds(self) -> list[dict]:
+        ext = self._apiextensions_v1()
+        try:
+            items = (await self._run(ext.list_custom_resource_definition)).items
+        except Exception:
+            return []
+        result = []
+        for crd in items:
+            spec = crd.spec
+            versions = [v.name for v in (spec.versions or [])] if spec else []
+            result.append({
+                "name": crd.metadata.name,
+                "group": (spec.group or "") if spec else "",
+                "scope": (spec.scope or "") if spec else "",
+                "kind": (spec.names.kind or "") if (spec and spec.names) else "",
+                "versions": versions,
+                "created": _ts(crd.metadata.creation_timestamp),
+            })
+        return result
 
     # ── Networking extras ─────────────────────────────────────────────────────
 
@@ -1221,6 +1474,74 @@ class KubernetesPlugin(PluginBase):
 
         await asyncio.gather(send_loop(), recv_loop(), return_exceptions=True)
         t.join(timeout=2)
+
+    async def _watch_pods(self, websocket, namespace: str = "") -> None:
+        """Stream Kubernetes pod watch events to a WebSocket."""
+        import concurrent.futures
+        import json
+
+        from kubernetes import watch as k8s_watch  # type: ignore[import]
+
+        loop = asyncio.get_event_loop()
+        stop_event = asyncio.Event()
+
+        def _stream() -> None:
+            w = k8s_watch.Watch()
+            core = self._core_v1()
+            list_fn = (
+                core.list_namespaced_pod if namespace else core.list_pod_for_all_namespaces
+            )
+            kwargs: dict = {"timeout_seconds": 300}
+            if namespace:
+                kwargs["namespace"] = namespace
+            try:
+                for event in w.stream(list_fn, **kwargs):
+                    if stop_event.is_set():
+                        w.stop()
+                        break
+                    pod = event["object"]
+                    meta = pod.metadata
+                    status_obj = pod.status
+                    phase = (status_obj.phase or "Unknown") if status_obj else "Unknown"
+                    containers = (status_obj.container_statuses or []) if status_obj else []
+                    restarts = sum(c.restart_count or 0 for c in containers)
+                    ready_count = sum(1 for c in containers if c.ready)
+                    spec_containers = (pod.spec.containers or []) if pod.spec else []
+                    total = len(spec_containers)
+                    row = {
+                        "name": meta.name,
+                        "namespace": meta.namespace,
+                        "status": phase,
+                        "ready": f"{ready_count}/{total}",
+                        "restarts": restarts,
+                        "node": (pod.spec.node_name or "") if pod.spec else "",
+                        "ip": (status_obj.pod_ip or "") if status_obj else "",
+                        "created": _ts(meta.creation_timestamp),
+                    }
+                    payload = json.dumps({"type": event["type"], "pod": row})
+                    asyncio.run_coroutine_threadsafe(websocket.send_text(payload), loop)
+            except Exception:
+                pass
+            finally:
+                asyncio.run_coroutine_threadsafe(stop_event.set(), loop)
+
+        async def _client_recv() -> None:
+            try:
+                while True:
+                    await websocket.receive_text()
+            except Exception:
+                stop_event.set()
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        recv_task = asyncio.create_task(_client_recv())
+        try:
+            await loop.run_in_executor(executor, _stream)
+        except Exception:
+            pass
+        finally:
+            stop_event.set()
+            recv_task.cancel()
+            executor.shutdown(wait=False)
 
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.kubernetes.api import make_router

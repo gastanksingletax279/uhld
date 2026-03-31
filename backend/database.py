@@ -90,6 +90,31 @@ async def migrate_db() -> None:
         await conn.execute(text("DROP TABLE plugin_configs"))
         await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
 
+    # ── assets table — add columns that were missing from initial schema ──────
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(assets)"))
+        asset_cols = {row[1] for row in result.fetchall()}
+        if asset_cols:  # table exists (not a fresh install)
+            new_asset_cols = [
+                ("asset_type",  "VARCHAR(32)  NOT NULL DEFAULT 'other'"),
+                ("role",        "VARCHAR(128)"),
+                ("manufacturer","VARCHAR(128)"),
+                ("model",       "VARCHAR(128)"),
+                ("cpu",         "VARCHAR(256)"),
+                ("cpu_cores",   "INTEGER"),
+                ("ram_gb",      "INTEGER"),
+                ("storage",     "VARCHAR(256)"),
+                ("gpu",         "VARCHAR(256)"),
+                ("os",          "VARCHAR(128)"),
+                ("ip_address",  "VARCHAR(64)"),
+                ("notes",       "TEXT"),
+                ("created_at",  "DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP)"),
+                ("updated_at",  "DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP)"),
+            ]
+            for col, typedef in new_asset_cols:
+                if col not in asset_cols:
+                    await conn.execute(text(f"ALTER TABLE assets ADD COLUMN {col} {typedef}"))
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:

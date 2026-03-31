@@ -3,12 +3,14 @@ import {
   api,
   K8sNode, K8sPod, K8sNamespace,
   K8sDeployment, K8sStatefulSet, K8sDaemonSet, K8sJob, K8sCronJob,
-  K8sService, K8sIngress, K8sHTTPRoute, K8sIngressClass,
-  K8sPV, K8sPVC, K8sConfigMap, K8sSecret,
+  K8sReplicaSet, K8sHPA,
+  K8sService, K8sIngress, K8sHTTPRoute, K8sIngressClass, K8sEndpoints, K8sNetworkPolicy,
+  K8sPV, K8sPVC, K8sConfigMap, K8sSecret, K8sStorageClass,
   K8sLonghornVolume, K8sLonghornNode,
   K8sCertificate, K8sEvent, K8sOverview,
   K8sServiceAccount, K8sRole, K8sClusterRole, K8sRoleBinding, K8sClusterRoleBinding,
   K8sHelmRelease,
+  K8sCRD, K8sResourceQuota, K8sLimitRange, K8sPriorityClass, K8sPDB,
 } from '../../api/client'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 import {
@@ -20,30 +22,41 @@ import {
 
 // ── Tab/Group types ────────────────────────────────────────────────────────
 
-type Group = 'cluster' | 'workloads' | 'networking' | 'storage' | 'access' | 'helm'
-type ClusterTab    = 'overview' | 'nodes' | 'namespaces'
-type WorkloadsTab  = 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs'
-type NetworkingTab = 'services' | 'ingresses' | 'ingressclasses' | 'httproutes'
-type StorageTab    = 'pvs' | 'pvcs' | 'configmaps' | 'secrets' | 'certificates' | 'longhorn'
+type Group = 'cluster' | 'workloads' | 'networking' | 'storage' | 'config' | 'access' | 'helm'
+type ClusterTab    = 'overview' | 'nodes' | 'namespaces' | 'crds'
+type WorkloadsTab  = 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs' | 'replicasets' | 'hpas'
+type NetworkingTab = 'services' | 'ingresses' | 'ingressclasses' | 'httproutes' | 'endpoints' | 'networkpolicies'
+type StorageTab    = 'pvs' | 'pvcs' | 'configmaps' | 'secrets' | 'certificates' | 'longhorn' | 'storageclasses'
+type ConfigTab     = 'resourcequotas' | 'limitranges' | 'priorityclasses' | 'pdbs'
 type AccessTab     = 'serviceaccounts' | 'roles' | 'clusterroles' | 'rolebindings' | 'clusterrolebindings'
 type HelmTab       = 'helmreleases'
-type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab | AccessTab | HelmTab
+type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab | ConfigTab | AccessTab | HelmTab
 
 const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
-  cluster:    [{ id: 'overview', label: 'Overview' }, { id: 'nodes', label: 'Nodes' }, { id: 'namespaces', label: 'Namespaces' }],
+  cluster:    [
+    { id: 'overview', label: 'Overview' }, { id: 'nodes', label: 'Nodes' },
+    { id: 'namespaces', label: 'Namespaces' }, { id: 'crds', label: 'CRDs' },
+  ],
   workloads:  [
     { id: 'pods', label: 'Pods' }, { id: 'deployments', label: 'Deployments' },
     { id: 'statefulsets', label: 'StatefulSets' }, { id: 'daemonsets', label: 'DaemonSets' },
     { id: 'jobs', label: 'Jobs' }, { id: 'cronjobs', label: 'CronJobs' },
+    { id: 'replicasets', label: 'ReplicaSets' }, { id: 'hpas', label: 'HPAs' },
   ],
   networking: [
     { id: 'services', label: 'Services' }, { id: 'ingresses', label: 'Ingresses' },
     { id: 'ingressclasses', label: 'IngressClasses' }, { id: 'httproutes', label: 'HTTPRoutes' },
+    { id: 'endpoints', label: 'Endpoints' }, { id: 'networkpolicies', label: 'NetworkPolicies' },
   ],
   storage:    [
     { id: 'pvs', label: 'PersistentVolumes' }, { id: 'pvcs', label: 'PVCs' },
     { id: 'configmaps', label: 'ConfigMaps' }, { id: 'secrets', label: 'Secrets' },
     { id: 'certificates', label: 'Certificates' }, { id: 'longhorn', label: 'Longhorn' },
+    { id: 'storageclasses', label: 'StorageClasses' },
+  ],
+  config:     [
+    { id: 'resourcequotas', label: 'ResourceQuotas' }, { id: 'limitranges', label: 'LimitRanges' },
+    { id: 'priorityclasses', label: 'PriorityClasses' }, { id: 'pdbs', label: 'PodDisruptionBudgets' },
   ],
   access:     [
     { id: 'serviceaccounts', label: 'Service Accounts' }, { id: 'roles', label: 'Roles' },
@@ -53,7 +66,7 @@ const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
   helm:       [{ id: 'helmreleases', label: 'Releases' }],
 }
 
-const NS_TABS = new Set<Tab>(['pods','deployments','statefulsets','daemonsets','jobs','cronjobs','services','ingresses','httproutes','pvcs','configmaps','secrets','certificates','serviceaccounts','roles','rolebindings'])
+const NS_TABS = new Set<Tab>(['pods','deployments','statefulsets','daemonsets','jobs','cronjobs','replicasets','hpas','services','ingresses','httproutes','endpoints','networkpolicies','pvcs','configmaps','secrets','certificates','serviceaccounts','roles','rolebindings','resourcequotas','limitranges','pdbs'])
 
 // ── Generic lazy tab data store ────────────────────────────────────────────
 type TabState<T> = { data: T[]; loading: boolean; loaded: boolean; error: string | null }
@@ -144,14 +157,26 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [roleBindings,  setRoleBindings]  = useState<TabState<K8sRoleBinding>>(emptyTab())
   const [crBindings,    setCrBindings]    = useState<TabState<K8sClusterRoleBinding>>(emptyTab())
   const [helmReleases,  setHelmReleases]  = useState<TabState<K8sHelmRelease>>(emptyTab())
+  const [replicaSets,   setReplicaSets]   = useState<TabState<K8sReplicaSet>>(emptyTab())
+  const [hpas,          setHpas]          = useState<TabState<K8sHPA>>(emptyTab())
+  const [endpoints,     setEndpoints]     = useState<TabState<K8sEndpoints>>(emptyTab())
+  const [netPolicies,   setNetPolicies]   = useState<TabState<K8sNetworkPolicy>>(emptyTab())
+  const [storageClasses,setStorageClasses]= useState<TabState<K8sStorageClass>>(emptyTab())
+  const [crds,          setCrds]          = useState<TabState<K8sCRD>>(emptyTab())
+  const [resourceQuotas,setResourceQuotas]= useState<TabState<K8sResourceQuota>>(emptyTab())
+  const [limitRanges,   setLimitRanges]   = useState<TabState<K8sLimitRange>>(emptyTab())
+  const [priorityClasses,setPriorityClasses]= useState<TabState<K8sPriorityClass>>(emptyTab())
+  const [pdbs,          setPdbs]          = useState<TabState<K8sPDB>>(emptyTab())
   const [selectedPods,  setSelectedPods]  = useState<Set<string>>(new Set())
 
   const [actionLoading,   setActionLoading]   = useState<string | null>(null)
   const [actionError,     setActionError]     = useState<string | null>(null)
   const [logsModal,       setLogsModal]       = useState<LogsModal | null>(null)
   const [logsTail,        setLogsTail]        = useState(false)
-  const logsWsRef  = useRef<WebSocket | null>(null)
-  const logsPreRef = useRef<HTMLPreElement>(null)
+  const logsWsRef       = useRef<WebSocket | null>(null)
+  const logsPreRef      = useRef<HTMLPreElement>(null)
+  const podsWsRef       = useRef<WebSocket | null>(null)
+  const podsWsRetryRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [shellModal,      setShellModal]      = useState<ShellModal | null>(null)
   const [yamlModal,       setYamlModal]       = useState<YamlModal | null>(null)
   const [secretDataModal, setSecretDataModal] = useState<SecretDataModal | null>(null)
@@ -186,15 +211,20 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       case 'daemonsets':    load(setDaemonsets,  () => k8s.daemonsets(ns), 'daemonsets'); break
       case 'jobs':          load(setJobs,        () => k8s.jobs(ns), 'jobs'); break
       case 'cronjobs':      load(setCronjobs,    () => k8s.cronjobs(ns), 'cronjobs'); break
+      case 'replicasets':   load(setReplicaSets, () => k8s.replicaSets(ns), 'replicasets'); break
+      case 'hpas':          load(setHpas,        () => k8s.hpas(ns), 'hpas'); break
       case 'services':      load(setServices,    () => k8s.services(ns), 'services'); break
       case 'ingresses':     load(setIngresses,   () => k8s.ingresses(ns), 'ingresses'); break
       case 'ingressclasses':if (!skip(ingressclasses)) load(setIngressclasses, () => k8s.ingressclasses(), 'ingressclasses'); break
       case 'httproutes':    load(setHttproutes,  () => k8s.httproutes(ns), 'httproutes'); break
+      case 'endpoints':     load(setEndpoints,   () => k8s.endpoints(ns), 'endpoints'); break
+      case 'networkpolicies':load(setNetPolicies,() => k8s.networkpolicies(ns), 'networkpolicies'); break
       case 'pvs':           if (!skip(pvs))           load(setPvs,          () => k8s.persistentvolumes(), 'pvs'); break
       case 'pvcs':          load(setPvcs,        () => k8s.pvcs(ns), 'pvcs'); break
       case 'configmaps':    load(setConfigmaps,  () => k8s.configmaps(ns), 'configmaps'); break
       case 'secrets':       load(setSecrets,       () => k8s.secrets(ns), 'secrets'); break
       case 'certificates':  load(setCertificates,  () => k8s.certificates(ns), 'certificates'); break
+      case 'storageclasses':if (!skip(storageClasses)) load(setStorageClasses, () => k8s.storageclasses(), 'storageclasses'); break
       case 'longhorn':
         if (!skip(lhVolumes)) load(setLhVolumes, () => k8s.longhornVolumes(), 'volumes')
         if (!skip(lhNodes))   load(setLhNodes,   () => k8s.longhornNodes(), 'nodes')
@@ -205,6 +235,11 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       case 'rolebindings':          load(setRoleBindings, () => k8s.rolebindings(ns), 'rolebindings'); break
       case 'clusterrolebindings':   if (!skip(crBindings))    load(setCrBindings, () => k8s.clusterrolebindings(), 'clusterrolebindings'); break
       case 'helmreleases':          load(setHelmReleases, () => k8s.helmReleases(ns), 'releases'); break
+      case 'crds':                  if (!skip(crds))           load(setCrds, () => k8s.crds(), 'crds'); break
+      case 'resourcequotas':        load(setResourceQuotas, () => k8s.resourcequotas(ns), 'resourcequotas'); break
+      case 'limitranges':           load(setLimitRanges,    () => k8s.limitranges(ns), 'limitranges'); break
+      case 'priorityclasses':       if (!skip(priorityClasses)) load(setPriorityClasses, () => k8s.priorityclasses(), 'priorityclasses'); break
+      case 'pdbs':                  load(setPdbs,           () => k8s.pdbs(ns), 'pdbs'); break
     }
   }, [nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -220,6 +255,10 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     setLhVolumes(emptyTab()); setLhNodes(emptyTab())
     setSvcAccounts(emptyTab()); setRoles(emptyTab()); setClusterRoles(emptyTab())
     setRoleBindings(emptyTab()); setCrBindings(emptyTab()); setHelmReleases(emptyTab())
+    setReplicaSets(emptyTab()); setHpas(emptyTab()); setEndpoints(emptyTab())
+    setNetPolicies(emptyTab()); setStorageClasses(emptyTab()); setCrds(emptyTab())
+    setResourceQuotas(emptyTab()); setLimitRanges(emptyTab())
+    setPriorityClasses(emptyTab()); setPdbs(emptyTab())
     setSelectedPods(new Set())
     loadTab(tab)
   }, [instanceId])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -245,17 +284,66 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     return () => { ws.close(); logsWsRef.current = null }
   }, [logsTail, logsModal?.namespace, logsModal?.pod, logsModal?.container])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Auto-refresh pods when any are in a non-running state ────────────────
-  const NON_RUNNING = new Set(['Pending', 'Unknown', 'Failed'])
-  function hasUnhealthyPod(data: K8sPod[]) {
-    return data.some((p) => NON_RUNNING.has(p.status) || p.status.toLowerCase().includes('back'))
-  }
+  // ── Real-time pod watch via WebSocket ─────────────────────────────────────
   useEffect(() => {
     if (tab !== 'pods' || !pods.loaded) return
-    if (!hasUnhealthyPod(pods.data)) return
-    const id = setInterval(() => loadTab('pods', nsFilter, true), 10_000)
-    return () => clearInterval(id)
-  }, [tab, pods.loaded, pods.data, nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    let retryDelay = 2000
+    let cancelled = false
+
+    function connect() {
+      if (cancelled) return
+      const ws = new WebSocket(k8s.podsWatchUrl(nsFilter))
+      podsWsRef.current = ws
+
+      ws.onmessage = (ev) => {
+        try {
+          const { type, pod } = JSON.parse(ev.data) as { type: string; pod: K8sPod }
+          setPods((prev) => {
+            if (type === 'DELETED') {
+              return { ...prev, data: prev.data.filter((p) => !(p.name === pod.name && p.namespace === pod.namespace)) }
+            }
+            // ADDED or MODIFIED — upsert
+            const idx = prev.data.findIndex((p) => p.name === pod.name && p.namespace === pod.namespace)
+            const next = [...prev.data]
+            if (idx >= 0) next[idx] = pod
+            else next.push(pod)
+            return { ...prev, data: next }
+          })
+          retryDelay = 2000  // reset backoff on successful message
+        } catch { /* ignore parse errors */ }
+      }
+
+      ws.onclose = () => {
+        podsWsRef.current = null
+        if (!cancelled) {
+          podsWsRetryRef.current = setTimeout(() => {
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+            connect()
+          }, retryDelay)
+        }
+      }
+
+      ws.onerror = () => ws.close()
+    }
+
+    connect()
+
+    // Fallback poll every 30 s in case watch stream is unreliable
+    const fallbackId = setInterval(() => {
+      if (!podsWsRef.current || podsWsRef.current.readyState !== WebSocket.OPEN) {
+        loadTab('pods', nsFilter, true)
+      }
+    }, 30_000)
+
+    return () => {
+      cancelled = true
+      if (podsWsRetryRef.current) clearTimeout(podsWsRetryRef.current)
+      podsWsRef.current?.close()
+      podsWsRef.current = null
+      clearInterval(fallbackId)
+    }
+  }, [tab, pods.loaded, nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyNsFilter(ns: string) {
     setNsFilter(ns)
@@ -270,11 +358,17 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       pods: pods as TabState<unknown>, deployments: deployments as TabState<unknown>,
       statefulsets: statefulsets as TabState<unknown>, daemonsets: daemonsets as TabState<unknown>,
       jobs: jobs as TabState<unknown>, cronjobs: cronjobs as TabState<unknown>,
+      replicasets: replicaSets as TabState<unknown>, hpas: hpas as TabState<unknown>,
       services: services as TabState<unknown>, ingresses: ingresses as TabState<unknown>,
       ingressclasses: ingressclasses as TabState<unknown>, httproutes: httproutes as TabState<unknown>,
+      endpoints: endpoints as TabState<unknown>, networkpolicies: netPolicies as TabState<unknown>,
       pvs: pvs as TabState<unknown>, pvcs: pvcs as TabState<unknown>,
       configmaps: configmaps as TabState<unknown>, secrets: secrets as TabState<unknown>,
       certificates: certificates as TabState<unknown>, longhorn: lhVolumes as TabState<unknown>,
+      storageclasses: storageClasses as TabState<unknown>,
+      crds: crds as TabState<unknown>,
+      resourcequotas: resourceQuotas as TabState<unknown>, limitranges: limitRanges as TabState<unknown>,
+      priorityclasses: priorityClasses as TabState<unknown>, pdbs: pdbs as TabState<unknown>,
       serviceaccounts: svcAccounts as TabState<unknown>, roles: roles as TabState<unknown>,
       clusterroles: clusterRoles as TabState<unknown>, rolebindings: roleBindings as TabState<unknown>,
       clusterrolebindings: crBindings as TabState<unknown>, helmreleases: helmReleases as TabState<unknown>,
@@ -454,7 +548,8 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const GROUPS: { id: Group; label: string }[] = [
     { id: 'cluster', label: 'Cluster' }, { id: 'workloads', label: 'Workloads' },
     { id: 'networking', label: 'Networking' }, { id: 'storage', label: 'Storage' },
-    { id: 'access', label: 'Access Control' }, { id: 'helm', label: 'Helm' },
+    { id: 'config', label: 'Config' }, { id: 'access', label: 'Access Control' },
+    { id: 'helm', label: 'Helm' },
   ]
 
   return (
@@ -507,21 +602,32 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {tab === 'overview'      && <OverviewPanel      state={overview} onRefresh={() => { setOverview(emptyOverview()); loadTab('overview', '', true) }} />}
       {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} />}
       {tab === 'namespaces'    && <NamespacesTable    state={namespaces}    actionLoading={actionLoading} onDelete={promptDeleteNamespace} />}
+      {tab === 'crds'          && <CRDsTable          state={crds} />}
       {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} selected={selectedPods} onSelect={setSelectedPods} onBulkRestart={bulkRestartPods} />}
       {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onRestart={(d) => restartWorkload('deployment', d.namespace, d.name)} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} />}
       {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  actionLoading={actionLoading} onRestart={(s) => restartWorkload('statefulset', s.namespace, s.name)} onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} />}
       {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    actionLoading={actionLoading} onRestart={(d) => restartWorkload('daemonset', d.namespace, d.name)} onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} />}
       {tab === 'jobs'          && <JobsTable          state={jobs}          />}
       {tab === 'cronjobs'      && <CronJobsTable      state={cronjobs}      />}
+      {tab === 'replicasets'   && <ReplicaSetsTable   state={replicaSets}   />}
+      {tab === 'hpas'          && <HPAsTable          state={hpas}          />}
       {tab === 'services'      && <ServicesTable      state={services}      onYaml={(s) => openYaml('service', s.name, s.namespace)} />}
       {tab === 'ingresses'     && <IngressesTable     state={ingresses}     onYaml={(i) => openYaml('ingress', i.name, i.namespace)} />}
       {tab === 'ingressclasses'&& <IngressClassesTable state={ingressclasses} />}
       {tab === 'httproutes'    && <HTTPRoutesTable    state={httproutes}    />}
+      {tab === 'endpoints'     && <EndpointsTable     state={endpoints}     />}
+      {tab === 'networkpolicies'&& <NetworkPoliciesTable state={netPolicies} />}
       {tab === 'pvs'           && <PVsTable           state={pvs}           onYaml={(v) => openYaml('persistentvolume', v.name, '')} />}
       {tab === 'pvcs'          && <PVCsTable          state={pvcs}          onYaml={(v) => openYaml('persistentvolumeclaim', v.name, v.namespace)} />}
       {tab === 'configmaps'    && <ConfigMapsTable    state={configmaps}    onYaml={(c) => openYaml('configmap', c.name, c.namespace)} />}
       {tab === 'secrets'       && <SecretsTable       state={secrets}       onYaml={(s) => openYaml('secret', s.name, s.namespace)} onReveal={(s) => openSecretData(s.namespace, s.name)} />}
       {tab === 'certificates'  && <CertificatesTable  state={certificates}  />}
+      {tab === 'storageclasses'&& <StorageClassesTable state={storageClasses} />}
+      {/* Config */}
+      {tab === 'resourcequotas'&& <ResourceQuotasTable state={resourceQuotas} />}
+      {tab === 'limitranges'   && <LimitRangesTable   state={limitRanges}   />}
+      {tab === 'priorityclasses'&& <PriorityClassesTable state={priorityClasses} />}
+      {tab === 'pdbs'          && <PDBsTable          state={pdbs}          />}
       {/* Access control */}
       {tab === 'serviceaccounts'      && <ServiceAccountsTable  state={svcAccounts}  />}
       {tab === 'roles'                && <RolesTable             state={roles}        />}
@@ -1925,4 +2031,286 @@ function HelmStatusBadge({ status }: { status: string }) {
     : status === 'uninstalling' ? 'bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded text-[10px] font-medium'
     : 'badge-muted'
   return <span className={cls}>{status}</span>
+}
+
+// ── ReplicaSets Table ──────────────────────────────────────────────────────
+
+function ReplicaSetsTable({ state }: { state: TabState<K8sReplicaSet> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'desired', label: 'Desired' }, { key: 'ready', label: 'Ready' },
+    { key: 'owner', label: 'Owner' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No ReplicaSets found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((rs) => (
+        <tr key={`${rs.namespace}/${rs.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{rs.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={rs.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{rs.desired}</td>
+          <td className="px-3 py-2 font-mono text-center">
+            <span className={rs.ready === rs.desired && rs.desired > 0 ? 'text-green-400' : rs.desired === 0 ? 'text-muted' : 'text-warning'}>{rs.ready}</span>
+          </td>
+          <td className="px-3 py-2 text-muted">{rs.owner || '—'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(rs.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── HPAs Table ─────────────────────────────────────────────────────────────
+
+function HPAsTable({ state }: { state: TabState<K8sHPA> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'target', label: 'Target' }, { key: 'min_replicas', label: 'Min' },
+    { key: 'max_replicas', label: 'Max' }, { key: 'current_replicas', label: 'Current' },
+    { key: 'cpu_pct', label: 'CPU%' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No HorizontalPodAutoscalers found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((hpa) => (
+        <tr key={`${hpa.namespace}/${hpa.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{hpa.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={hpa.namespace} /></td>
+          <td className="px-3 py-2 text-muted">{hpa.target || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{hpa.min_replicas}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{hpa.max_replicas}</td>
+          <td className="px-3 py-2 font-mono text-center">
+            <span className={hpa.current_replicas === hpa.desired_replicas ? 'text-green-400' : 'text-warning'}>{hpa.current_replicas}</span>
+          </td>
+          <td className="px-3 py-2 font-mono text-center text-muted">{hpa.cpu_pct != null ? `${hpa.cpu_pct}%` : '—'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(hpa.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── Endpoints Table ────────────────────────────────────────────────────────
+
+function EndpointsTable({ state }: { state: TabState<K8sEndpoints> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'addresses', label: 'Addresses' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No Endpoints found." cols={cols} sort={sort} onSort={toggle} extraCols={['Ports']}>
+      {sorted(state.data, sort).map((ep) => (
+        <tr key={`${ep.namespace}/${ep.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{ep.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={ep.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{ep.addresses}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(ep.created)}</td>
+          <td className="px-3 py-2 font-mono text-muted">{ep.ports.length > 0 ? ep.ports.join(', ') : '—'}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── NetworkPolicies Table ──────────────────────────────────────────────────
+
+function NetworkPoliciesTable({ state }: { state: TabState<K8sNetworkPolicy> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'pod_selector', label: 'Pod Selector' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No NetworkPolicies found." cols={cols} sort={sort} onSort={toggle} extraCols={['Policy Types']}>
+      {sorted(state.data, sort).map((np) => (
+        <tr key={`${np.namespace}/${np.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{np.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={np.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{np.pod_selector}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(np.created)}</td>
+          <td className="px-3 py-2">
+            <div className="flex gap-1">
+              {np.policy_types.map((t) => (
+                <span key={t} className={t === 'Ingress' ? 'bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded text-[10px] font-medium' : 'bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded text-[10px] font-medium'}>{t}</span>
+              ))}
+              {np.policy_types.length === 0 && <span className="text-muted">—</span>}
+            </div>
+          </td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── StorageClasses Table ───────────────────────────────────────────────────
+
+function StorageClassesTable({ state }: { state: TabState<K8sStorageClass> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'provisioner', label: 'Provisioner' },
+    { key: 'reclaim_policy', label: 'Reclaim Policy' }, { key: 'volume_binding_mode', label: 'Binding Mode' },
+    { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No StorageClasses found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((sc) => (
+        <tr key={sc.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">
+            {sc.name}
+            {sc.is_default && <span className="ml-1.5 badge-ok text-[10px]">default</span>}
+          </td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{sc.provisioner}</td>
+          <td className="px-3 py-2 text-muted">{sc.reclaim_policy}</td>
+          <td className="px-3 py-2 text-muted">{sc.volume_binding_mode}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(sc.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── CRDs Table ─────────────────────────────────────────────────────────────
+
+function CRDsTable({ state }: { state: TabState<K8sCRD> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'group', label: 'Group' },
+    { key: 'kind', label: 'Kind' }, { key: 'scope', label: 'Scope' },
+    { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No CustomResourceDefinitions found." cols={cols} sort={sort} onSort={toggle} extraCols={['Versions']}>
+      {sorted(state.data, sort).map((crd) => (
+        <tr key={crd.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[260px] truncate" title={crd.name}>{crd.name}</td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{crd.group}</td>
+          <td className="px-3 py-2 text-gray-300">{crd.kind}</td>
+          <td className="px-3 py-2">
+            <span className={crd.scope === 'Namespaced' ? 'badge-muted' : 'bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded text-[10px] font-medium'}>{crd.scope}</span>
+          </td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(crd.created)}</td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{crd.versions.join(', ')}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── ResourceQuotas Table ───────────────────────────────────────────────────
+
+function ResourceQuotasTable({ state }: { state: TabState<K8sResourceQuota> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No ResourceQuotas found." cols={cols} sort={sort} onSort={toggle} extraCols={['Resource', 'Used', 'Hard']}>
+      {sorted(state.data, sort).flatMap((rq) =>
+        rq.limits.length === 0
+          ? [(
+            <tr key={`${rq.namespace}/${rq.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+              <td className="px-3 py-2 font-medium text-gray-200">{rq.name}</td>
+              <td className="px-3 py-2"><NsBadge ns={rq.namespace} /></td>
+              <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(rq.created)}</td>
+              <td colSpan={3} className="px-3 py-2 text-muted">—</td>
+            </tr>
+          )]
+          : rq.limits.map((lim, i) => (
+            <tr key={`${rq.namespace}/${rq.name}/${lim.resource}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+              {i === 0 ? (
+                <>
+                  <td className="px-3 py-2 font-medium text-gray-200" rowSpan={rq.limits.length}>{rq.name}</td>
+                  <td className="px-3 py-2" rowSpan={rq.limits.length}><NsBadge ns={rq.namespace} /></td>
+                  <td className="px-3 py-2 text-muted whitespace-nowrap" rowSpan={rq.limits.length}>{fmtAge(rq.created)}</td>
+                </>
+              ) : null}
+              <td className="px-3 py-2 font-mono text-muted text-xs">{lim.resource}</td>
+              <td className="px-3 py-2 font-mono text-muted text-xs">{lim.used || '—'}</td>
+              <td className="px-3 py-2 font-mono text-muted text-xs">{lim.hard || '—'}</td>
+            </tr>
+          ))
+      )}
+    </DataTable>
+  )
+}
+
+// ── LimitRanges Table ──────────────────────────────────────────────────────
+
+function LimitRangesTable({ state }: { state: TabState<K8sLimitRange> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'limits_count', label: 'Limits' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No LimitRanges found." cols={cols} sort={sort} onSort={toggle} extraCols={['Types']}>
+      {sorted(state.data, sort).map((lr) => (
+        <tr key={`${lr.namespace}/${lr.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{lr.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={lr.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{lr.limits_count}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(lr.created)}</td>
+          <td className="px-3 py-2 text-muted text-xs">{lr.limit_types.join(', ') || '—'}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── PriorityClasses Table ──────────────────────────────────────────────────
+
+function PriorityClassesTable({ state }: { state: TabState<K8sPriorityClass> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'value', label: 'Value' },
+    { key: 'preemption_policy', label: 'Preemption Policy' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No PriorityClasses found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((pc) => (
+        <tr key={pc.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">
+            {pc.name}
+            {pc.global_default && <span className="ml-1.5 badge-ok text-[10px]">default</span>}
+          </td>
+          <td className="px-3 py-2 font-mono text-gray-300">{pc.value.toLocaleString()}</td>
+          <td className="px-3 py-2 text-muted">{pc.preemption_policy}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(pc.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+// ── PodDisruptionBudgets Table ─────────────────────────────────────────────
+
+function PDBsTable({ state }: { state: TabState<K8sPDB> }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
+    { key: 'min_available', label: 'Min Available' }, { key: 'max_unavailable', label: 'Max Unavailable' },
+    { key: 'current_healthy', label: 'Healthy' }, { key: 'expected_pods', label: 'Expected' },
+    { key: 'disruptions_allowed', label: 'Allowed Disruptions' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No PodDisruptionBudgets found." cols={cols} sort={sort} onSort={toggle}>
+      {sorted(state.data, sort).map((pdb) => (
+        <tr key={`${pdb.namespace}/${pdb.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+          <td className="px-3 py-2 font-medium text-gray-200">{pdb.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={pdb.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{pdb.min_available || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{pdb.max_unavailable || '—'}</td>
+          <td className="px-3 py-2 font-mono text-center">
+            <span className={pdb.current_healthy >= pdb.desired_healthy ? 'text-green-400' : 'text-warning'}>{pdb.current_healthy}</span>
+          </td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{pdb.expected_pods}</td>
+          <td className="px-3 py-2 font-mono text-center">
+            <span className={pdb.disruptions_allowed > 0 ? 'text-green-400' : 'text-muted'}>{pdb.disruptions_allowed}</span>
+          </td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(pdb.created)}</td>
+        </tr>
+      ))}
+    </DataTable>
+  )
 }

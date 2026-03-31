@@ -53,11 +53,13 @@ function SortableWidget({
   summary,
   editing,
   isBeingDragged,
+  isMultiInstance,
 }: {
   plugin: PluginListItem
   summary: PluginSummary | undefined
   editing: boolean
   isBeingDragged: boolean
+  isMultiInstance: boolean
 }) {
   const instanceKey = `${plugin.plugin_id}:${plugin.instance_id}`
   const viewPath = plugin.instance_id === 'default'
@@ -87,7 +89,7 @@ function SortableWidget({
           <GripVertical className="w-4 h-4" />
         </div>
       )}
-      <WidgetCard plugin={plugin} summary={summary}>
+      <WidgetCard plugin={plugin} summary={summary} isMultiInstance={isMultiInstance}>
         <PluginWidget pluginId={plugin.plugin_id} summary={summary} />
       </WidgetCard>
     </div>
@@ -125,6 +127,11 @@ function OverlayCard({
 export function DashboardGrid({ editing }: { editing: boolean }) {
   const { plugins, summaries, fetchSummary, summaryLoading } = usePluginStore()
   const enabled = plugins.filter((p) => p.enabled)
+
+  const instanceCount: Record<string, number> = {}
+  for (const p of enabled) {
+    instanceCount[p.plugin_id] = (instanceCount[p.plugin_id] ?? 0) + 1
+  }
 
   const [order, setOrder] = useState<string[]>(loadOrder)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -211,6 +218,7 @@ export function DashboardGrid({ editing }: { editing: boolean }) {
                 summary={summaryMap[key]}
                 editing={editing}
                 isBeingDragged={activeId === key}
+                isMultiInstance={instanceCount[plugin.plugin_id] > 1}
               />
             )
           })}

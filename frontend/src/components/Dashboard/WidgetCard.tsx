@@ -5,10 +5,11 @@ import type { PluginListItem, PluginSummary } from '../../api/client'
 interface WidgetCardProps {
   plugin: PluginListItem
   summary: PluginSummary | undefined
+  isMultiInstance?: boolean
   children?: React.ReactNode
 }
 
-export function WidgetCard({ plugin, summary, children }: WidgetCardProps) {
+export function WidgetCard({ plugin, summary, isMultiInstance = false, children }: WidgetCardProps) {
   const isError = !summary || summary.status === 'error'
 
   return (
@@ -18,7 +19,7 @@ export function WidgetCard({ plugin, summary, children }: WidgetCardProps) {
         <PluginIcon name={plugin.icon} className="w-4 h-4 text-muted" />
         <div className="flex-1 min-w-0">
           <span className="text-xs font-semibold text-gray-300 truncate block">{plugin.display_name}</span>
-          {plugin.instance_id !== 'default' && (
+          {(plugin.instance_id !== 'default' || isMultiInstance) && (
             <span className="text-[10px] text-muted truncate block">
               {plugin.instance_label || plugin.instance_id}
             </span>

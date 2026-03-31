@@ -15,6 +15,8 @@ import { KubernetesWidget } from './kubernetes/Widget'
 import { KubernetesView } from './kubernetes/View'
 import { AssetsWidget } from './assets/Widget'
 import { AssetsView } from './assets/View'
+import { NotificationsWidget } from './notifications/Widget'
+import { NotificationsView } from './notifications/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -25,6 +27,7 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   docker: DockerWidget,
   kubernetes: KubernetesWidget,
   assets: AssetsWidget,
+  notifications: NotificationsWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -36,4 +39,5 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   docker: DockerView,
   kubernetes: KubernetesView,
   assets: AssetsView,
+  notifications: NotificationsView,
 }

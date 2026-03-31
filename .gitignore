@@ -40,3 +40,6 @@ TODO.md
 # OS
 .DS_Store
 Thumbs.db
+
+# github prompts
+.github/prompts/

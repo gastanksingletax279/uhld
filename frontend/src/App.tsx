@@ -38,6 +38,7 @@ export default function App() {
           <Route path="plugins/:pluginId/:instanceId" element={<PluginViewPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/plugins" element={<SettingsPage tab="plugins" />} />
+          <Route path="settings/backup" element={<SettingsPage tab="backup" />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

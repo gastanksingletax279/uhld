@@ -311,8 +311,8 @@ export function PluginManager() {
       {/* Configure/Enable Modal */}
       {configModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="w-full max-w-md bg-surface-2 border border-surface-4 rounded-lg shadow-xl">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-4">
+          <div className="w-full max-w-md bg-surface-2 border border-surface-4 rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-4 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <PluginIcon name={configModal.plugin.icon} className="w-4 h-4 text-muted" />
                 <span className="text-sm font-semibold text-white">
@@ -326,7 +326,7 @@ export function PluginManager() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="px-4 py-4">
+            <div className="px-4 py-4 overflow-y-auto flex-1">
               {modalError && (
                 <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/30 rounded px-3 py-2">
                   {modalError}
@@ -372,8 +372,8 @@ export function PluginManager() {
       {/* Add Instance Modal */}
       {addModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="w-full max-w-md bg-surface-2 border border-surface-4 rounded-lg shadow-xl">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-4">
+          <div className="w-full max-w-md bg-surface-2 border border-surface-4 rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-4 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <PluginIcon name={addModal.icon} className="w-4 h-4 text-muted" />
                 <span className="text-sm font-semibold text-white">
@@ -384,7 +384,7 @@ export function PluginManager() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="px-4 py-4 space-y-3">
+            <div className="px-4 py-4 space-y-3 overflow-y-auto flex-1">
               {addModalError && (
                 <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded px-3 py-2">
                   {addModalError}

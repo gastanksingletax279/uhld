@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
 from backend.api import auth as auth_router
+from backend.api import backup as backup_router
 from backend.api import dashboard as dashboard_router
 from backend.api import plugins as plugins_router
 from backend.api import settings as settings_router
@@ -59,6 +60,16 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await registry.load_enabled_plugins(db, app)
     start_scheduler()
+    # Restore any previously configured backup schedule
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(
+            select(Setting).where(Setting.key.in_(["backup_schedule_enabled", "backup_schedule_interval"]))
+        )
+        sched_settings = {s.key: s.value for s in result.scalars().all()}
+    if sched_settings.get("backup_schedule_enabled") == "true":
+        from backend.api.backup import apply_backup_schedule
+        apply_backup_schedule(True, sched_settings.get("backup_schedule_interval", "daily"))
     logger.info("UHLD started")
     yield
     # Shutdown
@@ -93,6 +104,7 @@ app.include_router(auth_router.router)
 app.include_router(plugins_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(settings_router.router)
+app.include_router(backup_router.router)
 
 
 @app.get("/health")

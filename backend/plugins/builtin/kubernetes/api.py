@@ -80,6 +80,20 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    @router.get("/replicasets")
+    async def list_replicasets(namespace: str = ""):
+        try:
+            return {"replicasets": await plugin._fetch_replicasets(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/hpas")
+    async def list_hpas(namespace: str = ""):
+        try:
+            return {"hpas": await plugin._fetch_hpas(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     # ── Networking ────────────────────────────────────────────────────────────
 
     @router.get("/services")
@@ -93,6 +107,20 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
     async def list_ingresses(namespace: str = ""):
         try:
             return {"ingresses": await plugin._fetch_ingresses(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/endpoints")
+    async def list_endpoints(namespace: str = ""):
+        try:
+            return {"endpoints": await plugin._fetch_endpoints(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/networkpolicies")
+    async def list_networkpolicies(namespace: str = ""):
+        try:
+            return {"networkpolicies": await plugin._fetch_networkpolicies(namespace)}
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
@@ -137,6 +165,48 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
     async def list_certificates(namespace: str = ""):
         try:
             return {"certificates": await plugin._fetch_certificates(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/storageclasses")
+    async def list_storageclasses():
+        try:
+            return {"storageclasses": await plugin._fetch_storageclasses()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/crds")
+    async def list_crds():
+        try:
+            return {"crds": await plugin._fetch_crds()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/resourcequotas")
+    async def list_resourcequotas(namespace: str = ""):
+        try:
+            return {"resourcequotas": await plugin._fetch_resourcequotas(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/limitranges")
+    async def list_limitranges(namespace: str = ""):
+        try:
+            return {"limitranges": await plugin._fetch_limitranges(namespace)}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/priorityclasses")
+    async def list_priorityclasses():
+        try:
+            return {"priorityclasses": await plugin._fetch_priorityclasses()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/pdbs")
+    async def list_pdbs(namespace: str = ""):
+        try:
+            return {"pdbs": await plugin._fetch_pdbs(namespace)}
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
@@ -201,6 +271,19 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
             return await plugin._delete_namespace(name)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.websocket("/pods/watch")
+    async def watch_pods(websocket: WebSocket, namespace: str = ""):
+        await websocket.accept()
+        try:
+            await plugin._watch_pods(websocket, namespace)
+        except Exception:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     @router.websocket("/pods/{namespace}/{pod}/logs/stream")
     async def pod_logs_stream(websocket: WebSocket, namespace: str, pod: str, container: str = ""):

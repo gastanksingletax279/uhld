@@ -235,14 +235,26 @@ export const api = {
       daemonsets:        (namespace = '') => request<{ daemonsets: K8sDaemonSet[] }>(`${p}/daemonsets${ns(namespace)}`),
       jobs:              (namespace = '') => request<{ jobs: K8sJob[] }>(`${p}/jobs${ns(namespace)}`),
       cronjobs:          (namespace = '') => request<{ cronjobs: K8sCronJob[] }>(`${p}/cronjobs${ns(namespace)}`),
+      replicaSets:       (namespace = '') => request<{ replicasets: K8sReplicaSet[] }>(`${p}/replicasets${ns(namespace)}`),
+      hpas:              (namespace = '') => request<{ hpas: K8sHPA[] }>(`${p}/hpas${ns(namespace)}`),
       // Networking
       services:          (namespace = '') => request<{ services: K8sService[] }>(`${p}/services${ns(namespace)}`),
       ingresses:         (namespace = '') => request<{ ingresses: K8sIngress[] }>(`${p}/ingresses${ns(namespace)}`),
+      endpoints:         (namespace = '') => request<{ endpoints: K8sEndpoints[] }>(`${p}/endpoints${ns(namespace)}`),
+      networkpolicies:   (namespace = '') => request<{ networkpolicies: K8sNetworkPolicy[] }>(`${p}/networkpolicies${ns(namespace)}`),
       // Storage
       persistentvolumes: ()            => request<{ pvs: K8sPV[] }>(`${p}/persistentvolumes`),
       pvcs:              (namespace = '') => request<{ pvcs: K8sPVC[] }>(`${p}/persistentvolumeclaims${ns(namespace)}`),
       configmaps:        (namespace = '') => request<{ configmaps: K8sConfigMap[] }>(`${p}/configmaps${ns(namespace)}`),
       secrets:           (namespace = '') => request<{ secrets: K8sSecret[] }>(`${p}/secrets${ns(namespace)}`),
+      storageclasses:    ()               => request<{ storageclasses: K8sStorageClass[] }>(`${p}/storageclasses`),
+      // Cluster extras
+      crds:              ()               => request<{ crds: K8sCRD[] }>(`${p}/crds`),
+      // Config resources
+      resourcequotas:    (namespace = '') => request<{ resourcequotas: K8sResourceQuota[] }>(`${p}/resourcequotas${ns(namespace)}`),
+      limitranges:       (namespace = '') => request<{ limitranges: K8sLimitRange[] }>(`${p}/limitranges${ns(namespace)}`),
+      priorityclasses:   ()               => request<{ priorityclasses: K8sPriorityClass[] }>(`${p}/priorityclasses`),
+      pdbs:              (namespace = '') => request<{ pdbs: K8sPDB[] }>(`${p}/pdbs${ns(namespace)}`),
       // Actions
       podContainers:     (namespace: string, pod: string) =>
         request<{ containers: string[] }>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/containers`),
@@ -294,6 +306,14 @@ export const api = {
         const params = container ? `?container=${encodeURIComponent(container)}` : ''
         return `${wsProto}://${window.location.host}/api${base}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs/stream${params}`
       },
+      // Realtime pod watch WS URL
+      podsWatchUrl: (ns = '') => {
+        const base = p.replace(/^\/api/, '')
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        const params = ns ? `?namespace=${encodeURIComponent(ns)}` : ''
+        return `${wsProto}://${window.location.host}/api${base}/pods/watch${params}`
+      },
+
       // Access control
       serviceaccounts:       (namespace = '') => request<{ serviceaccounts: K8sServiceAccount[] }>(`${p}/serviceaccounts${ns(namespace)}`),
       roles:                 (namespace = '') => request<{ roles: K8sRole[] }>(`${p}/roles${ns(namespace)}`),
@@ -343,6 +363,52 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(items),
     }),
+
+  // Notifications plugin — instance-aware factory
+  notifications: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/notifications' : `/api/plugins/notifications/${instanceId}`
+    return {
+      getHistory: (limit = 50, offset = 0, level?: string, unreadOnly = false) =>
+        request<{ total: number; items: NotificationItem[] }>(
+          `${p}/history?limit=${limit}&offset=${offset}${level ? `&level=${level}` : ''}${unreadOnly ? '&unread_only=true' : ''}`
+        ),
+      markRead: (ids: number[] | null) =>
+        request<{ message: string }>(`${p}/mark-read`, {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        }),
+      clearHistory: () => request<{ message: string }>(`${p}/history`, { method: 'DELETE' }),
+      testChannel: (channel: string) =>
+        request<{ message: string }>(`${p}/test/${channel}`, { method: 'POST' }),
+    }
+  },
+
+  // Backup
+  backup: {
+    list: () => request<BackupInfo[]>('/api/backup/'),
+    create: () => request<BackupInfo>('/api/backup/', { method: 'POST' }),
+    delete: (filename: string) => request<{ message: string }>(`/api/backup/${filename}`, { method: 'DELETE' }),
+    restore: async (file: File): Promise<{ message: string }> => {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch('/api/backup/restore', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        throw new Error(typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail))
+      }
+      return res.json()
+    },
+    getSchedule: () => request<BackupSchedule>('/api/backup/schedule'),
+    updateSchedule: (body: BackupSchedule) =>
+      request<{ message: string }>('/api/backup/schedule', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+  },
 }
 
 // --- Types ---
@@ -885,6 +951,104 @@ export interface K8sHelmRelease {
   last_deployed: string
 }
 
+export interface K8sReplicaSet {
+  name: string
+  namespace: string
+  desired: number
+  ready: number
+  owner: string
+  created: string
+}
+
+export interface K8sHPA {
+  name: string
+  namespace: string
+  target: string
+  min_replicas: number
+  max_replicas: number
+  current_replicas: number
+  desired_replicas: number
+  cpu_pct: number | null
+  created: string
+}
+
+export interface K8sEndpoints {
+  name: string
+  namespace: string
+  addresses: number
+  ports: string[]
+  created: string
+}
+
+export interface K8sNetworkPolicy {
+  name: string
+  namespace: string
+  pod_selector: string
+  policy_types: string[]
+  created: string
+}
+
+export interface K8sStorageClass {
+  name: string
+  provisioner: string
+  reclaim_policy: string
+  volume_binding_mode: string
+  allow_volume_expansion: boolean
+  is_default: boolean
+  created: string
+}
+
+export interface K8sCRD {
+  name: string
+  group: string
+  scope: string
+  kind: string
+  versions: string[]
+  created: string
+}
+
+export interface K8sResourceQuotaLimit {
+  resource: string
+  hard: string
+  used: string
+}
+
+export interface K8sResourceQuota {
+  name: string
+  namespace: string
+  limits: K8sResourceQuotaLimit[]
+  created: string
+}
+
+export interface K8sLimitRange {
+  name: string
+  namespace: string
+  limits_count: number
+  limit_types: string[]
+  created: string
+}
+
+export interface K8sPriorityClass {
+  name: string
+  value: number
+  global_default: boolean
+  preemption_policy: string
+  description: string
+  created: string
+}
+
+export interface K8sPDB {
+  name: string
+  namespace: string
+  min_available: string
+  max_unavailable: string
+  current_healthy: number
+  desired_healthy: number
+  disruptions_allowed: number
+  expected_pods: number
+  created: string
+}
+
 // --- UniFi types ---
 export interface UniFiClient {
   id: string            // UUID (integration API) or MAC (session API)
@@ -1019,4 +1183,31 @@ export interface AssetItem {
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+// --- Notification types ---
+export interface NotificationItem {
+  id: number
+  event_type: string
+  plugin_id: string | null
+  instance_id: string | null
+  title: string
+  message: string
+  level: string  // info | warning | error
+  channels_sent: string | null  // JSON array string
+  read: boolean
+  created_at: string
+}
+
+// --- Backup types ---
+export interface BackupInfo {
+  filename: string
+  created_at: string
+  size_bytes: number
+}
+
+export interface BackupSchedule {
+  enabled: boolean
+  interval: string  // daily | weekly
+  keep_count: number
 }
