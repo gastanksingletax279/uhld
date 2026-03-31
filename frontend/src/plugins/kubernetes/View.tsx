@@ -84,7 +84,7 @@ function sorted<T>(data: T[], sort: SortState): T[] {
 }
 
 // ── Confirm modal ──────────────────────────────────────────────────────────
-type ConfirmModal = { title: string; message: string; onConfirm: () => void }
+type ConfirmModal = { title: string; message: string; items?: string[]; confirmLabel?: string; confirmClass?: string; onConfirm: () => void }
 
 // ── Secret data modal ──────────────────────────────────────────────────────
 type SecretDataModal = {
@@ -333,7 +333,21 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     }
   }
 
-  async function bulkRestartPods(podList: K8sPod[]) {
+  function bulkRestartPods(podList: K8sPod[]) {
+    setConfirmModal({
+      title: `Restart ${podList.length} pod${podList.length > 1 ? 's' : ''}?`,
+      message: 'The following pods will be deleted and rescheduled by their controller:',
+      items: podList.map((p) => `${p.namespace}/${p.name}`),
+      confirmLabel: 'Restart',
+      confirmClass: 'bg-yellow-600 hover:bg-yellow-500',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        await doBulkRestart(podList)
+      },
+    })
+  }
+
+  async function doBulkRestart(podList: K8sPod[]) {
     setActionLoading('bulk-restart'); setActionError(null)
     try {
       await Promise.all(podList.map((p) => k8s.restartPod(p.namespace, p.name)))
@@ -348,6 +362,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     setConfirmModal({
       title: `Delete namespace "${name}"?`,
       message: `This will delete the namespace and ALL resources inside it (pods, services, deployments, etc.). This action cannot be undone.`,
+      confirmLabel: 'Delete',
       onConfirm: async () => {
         setConfirmModal(null)
         setActionLoading(`delete-ns:${name}`); setActionError(null)
@@ -571,14 +586,21 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
           <div className="bg-surface-2 border border-surface-4 rounded-lg shadow-xl w-full max-w-md mx-4 p-5 space-y-4">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="font-semibold text-white text-sm">{confirmModal.title}</div>
                 <div className="text-xs text-muted mt-1">{confirmModal.message}</div>
+                {confirmModal.items && confirmModal.items.length > 0 && (
+                  <ul className="mt-2 max-h-48 overflow-y-auto space-y-0.5">
+                    {confirmModal.items.map((item) => (
+                      <li key={item} className="font-mono text-[11px] text-gray-300 bg-surface-3 rounded px-2 py-0.5 truncate">{item}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirmModal(null)} className="btn-ghost text-xs">Cancel</button>
-              <button onClick={confirmModal.onConfirm} className="bg-danger hover:bg-danger/80 text-white text-xs px-3 py-1.5 rounded transition-colors">Confirm Delete</button>
+              <button onClick={confirmModal.onConfirm} className={`text-white text-xs px-3 py-1.5 rounded transition-colors ${confirmModal.confirmClass ?? 'bg-danger hover:bg-danger/80'}`}>{confirmModal.confirmLabel ?? 'Confirm'}</button>
             </div>
           </div>
         </div>
@@ -961,15 +983,27 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, s
   const sortedData = sorted(state.data, sort)
   const allKeys = sortedData.map((p) => `${p.namespace}/${p.name}`)
   const allSelected = allKeys.length > 0 && allKeys.every((k) => selected.has(k))
+  const lastClickedIdx = useRef<number>(-1)
 
   function toggleAll() {
     if (allSelected) onSelect(new Set())
     else onSelect(new Set(allKeys))
+    lastClickedIdx.current = -1
   }
 
-  function toggleOne(key: string) {
+  function toggleOne(key: string, idx: number, shiftKey: boolean) {
     const next = new Set(selected)
-    next.has(key) ? next.delete(key) : next.add(key)
+    if (shiftKey && lastClickedIdx.current >= 0) {
+      const from = Math.min(lastClickedIdx.current, idx)
+      const to = Math.max(lastClickedIdx.current, idx)
+      const shouldSelect = !selected.has(key)
+      for (let i = from; i <= to; i++) {
+        shouldSelect ? next.add(allKeys[i]) : next.delete(allKeys[i])
+      }
+    } else {
+      next.has(key) ? next.delete(key) : next.add(key)
+    }
+    lastClickedIdx.current = idx
     onSelect(next)
   }
 
@@ -984,7 +1018,7 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, s
   return (
     <div className="space-y-2">
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 rounded bg-accent/10 border border-accent/30 text-sm">
+        <div className="sticky top-0 z-10 flex items-center gap-3 px-3 py-2 rounded bg-accent/10 border border-accent/30 backdrop-blur-sm text-sm">
           <span className="text-accent font-medium">{selected.size} pod{selected.size > 1 ? 's' : ''} selected</span>
           <button onClick={() => onBulkRestart(selectedPodObjs)} disabled={actionLoading === 'bulk-restart'} className="flex items-center gap-1 text-xs bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 px-2 py-1 rounded transition-colors disabled:opacity-50">
             {actionLoading === 'bulk-restart' ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}Restart Selected
@@ -994,13 +1028,13 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, s
       )}
       <DataTable state={state} emptyMsg="No pods found." cols={cols} sort={sort} onSort={toggle} extraCols={['', '']}
         selectHeader={<th className="px-3 py-2 w-8"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" /></th>}>
-        {sortedData.map((p) => {
+        {sortedData.map((p, idx) => {
           const key = `restart:${p.namespace}/${p.name}`
           const podKey = `${p.namespace}/${p.name}`
           const isRunning = p.status === 'Running'
           return (
             <tr key={podKey} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-              <td className="px-3 py-2 w-8"><input type="checkbox" checked={selected.has(podKey)} onChange={() => toggleOne(podKey)} className="cursor-pointer" /></td>
+              <td className="px-3 py-2 w-8"><input type="checkbox" checked={selected.has(podKey)} onChange={(e) => toggleOne(podKey, idx, (e.nativeEvent as MouseEvent).shiftKey)} className="cursor-pointer" /></td>
               <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={p.name}>{p.name}</td>
               <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
               <td className="px-3 py-2 font-mono text-muted">{p.ready}</td>
