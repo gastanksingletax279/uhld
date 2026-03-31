@@ -51,3 +51,26 @@ class Setting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class Asset(Base):
+    __tablename__ = "assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    manufacturer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cpu: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    storage: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    gpu: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    os: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )

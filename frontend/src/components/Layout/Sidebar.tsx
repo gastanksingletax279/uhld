@@ -5,7 +5,7 @@ import { Server, LayoutDashboard, Settings, Puzzle, Activity } from 'lucide-reac
 import { PluginIcon } from '../PluginIcon'
 
 const CATEGORY_ORDER = [
-  'virtualization', 'containers', 'monitoring', 'network', 'storage', 'media', 'arr', 'security', 'automation', 'other',
+  'virtualization', 'containers', 'monitoring', 'network', 'storage', 'infrastructure', 'media', 'arr', 'security', 'automation', 'other',
 ]
 
 export function Sidebar() {

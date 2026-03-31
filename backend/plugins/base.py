@@ -14,7 +14,7 @@ class PluginBase(ABC):
     description: str = ""
     version: str = "1.0.0"
     icon: str = "puzzle"  # lucide icon name
-    category: str = "other"  # virtualization | monitoring | media | network | storage | automation | arr | security
+    category: str = "other"  # virtualization | containers | monitoring | network | storage | infrastructure | media | arr | security | automation | other
     # Polling interval in seconds (0 = no polling)
     poll_interval: int = 60
 

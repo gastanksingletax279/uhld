@@ -303,6 +303,21 @@ export const api = {
     }
   },
 
+  // Asset Inventory — instance-aware factory
+  assets: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/assets' : `/api/plugins/assets/${instanceId}`
+    return {
+      list:    () => request<{ assets: AssetItem[] }>(`${p}/assets`),
+      create:  (body: Omit<AssetItem, 'id' | 'created_at' | 'updated_at'>) =>
+        request<AssetItem>(`${p}/assets`, { method: 'POST', body: JSON.stringify(body) }),
+      update:  (id: number, body: Omit<AssetItem, 'id' | 'created_at' | 'updated_at'>) =>
+        request<AssetItem>(`${p}/assets/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      remove:  (id: number) =>
+        request<void>(`${p}/assets/${id}`, { method: 'DELETE' }),
+      summary: () => request<{ total: number; by_type: Record<string, number> }>(`${p}/assets/summary`),
+    }
+  },
+
   // Settings
   getSettings: () => request<SettingItem[]>('/api/settings/'),
 
@@ -934,4 +949,24 @@ export interface UniFiZone {
   zone_key: string
   network_ids: string[]
   auto: boolean
+}
+
+// --- Asset Inventory types ---
+export interface AssetItem {
+  id: number
+  name: string
+  asset_type: string
+  role: string | null
+  manufacturer: string | null
+  model: string | null
+  cpu: string | null
+  cpu_cores: number | null
+  ram_gb: number | null
+  storage: string | null
+  gpu: string | null
+  os: string | null
+  ip_address: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
 }

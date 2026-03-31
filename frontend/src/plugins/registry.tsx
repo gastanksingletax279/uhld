@@ -13,6 +13,8 @@ import { DockerWidget } from './docker/Widget'
 import { DockerView } from './docker/View'
 import { KubernetesWidget } from './kubernetes/Widget'
 import { KubernetesView } from './kubernetes/View'
+import { AssetsWidget } from './assets/Widget'
+import { AssetsView } from './assets/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -22,6 +24,7 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   unifi: UniFiWidget,
   docker: DockerWidget,
   kubernetes: KubernetesWidget,
+  assets: AssetsWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -32,4 +35,5 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   unifi: UniFiView,
   docker: DockerView,
   kubernetes: KubernetesView,
+  assets: AssetsView,
 }
