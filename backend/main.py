@@ -15,8 +15,10 @@ from sqlalchemy import func, select
 from backend.api import auth as auth_router
 from backend.api import backup as backup_router
 from backend.api import dashboard as dashboard_router
+from backend.api import oauth as oauth_router
 from backend.api import plugins as plugins_router
 from backend.api import settings as settings_router
+from backend.api import users as users_router
 from backend.auth import hash_password
 from backend.database import AsyncSessionLocal, init_db, migrate_db
 from backend.models import Setting, User
@@ -41,6 +43,8 @@ async def _bootstrap_admin() -> None:
                 username="admin",
                 hashed_password=hash_password("admin"),
                 is_admin=True,
+                role="admin",
+                is_active=True,
             )
             db.add(user)
             # Mark that this default account needs a password change
@@ -101,6 +105,8 @@ app.add_middleware(
 
 # Core API routers
 app.include_router(auth_router.router)
+app.include_router(oauth_router.router)
+app.include_router(users_router.router)
 app.include_router(plugins_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(settings_router.router)

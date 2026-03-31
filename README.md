@@ -6,6 +6,8 @@ A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Prox
 
 > This project is built entirely using [Claude Code](https://claude.ai/code), Anthropic's agentic coding tool.
 
+![UHLD Dashboard](images/dashboard.png)
+
 ---
 
 ## What it is
@@ -31,6 +33,10 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Light / dark mode toggle | ✅ Complete |
 | Drag-to-reorder dashboard tiles | ✅ Complete |
 | Multi-instance plugin support | ✅ Complete |
+| Multi-user with admin / viewer roles | ✅ Complete |
+| TOTP 2FA (Google Authenticator, Authy) | ✅ Complete |
+| Passkeys / WebAuthn (YubiKey, Touch ID, Face ID, Windows Hello) | ✅ Complete |
+| OAuth / OIDC (Entra ID, Google, GitHub) | ✅ Complete |
 | Proxmox VE plugin (nodes, VMs, storage, start/stop/reboot) | ✅ Complete |
 | AdGuard Home plugin (stats, query log, protection toggle) | ✅ Complete |
 | Pi-hole plugin (stats, query log, blocking toggle) | ✅ Complete |
@@ -38,8 +44,10 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | ✅ Complete |
 | Docker plugin (containers, images, logs, start/stop/restart) | ✅ Complete |
 | Kubernetes plugin (nodes, workloads, networking, storage, logs, shell, YAML editor) | ✅ Complete |
+| Notifications plugin (email, Telegram, webhook) | ✅ Complete |
+| Configuration backup & restore | ✅ Complete |
+| Asset Inventory plugin | ✅ Complete |
 | Plex / Jellyfin / TrueNAS / Synology | Planned |
-| Notifications, config backup/restore | Planned |
 
 ---
 
@@ -47,7 +55,7 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy async + aiosqlite, APScheduler
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, dnd-kit
-- **Auth:** JWT (httpOnly cookie), bcrypt
+- **Auth:** JWT (httpOnly cookie), bcrypt, TOTP (`pyotp`), WebAuthn (`py-webauthn`), OAuth 2.0 / OIDC
 - **Storage:** SQLite — zero external dependencies
 - **Deployment:** Multi-stage Docker (node:20-alpine → python:3.12-slim)
 
@@ -122,11 +130,11 @@ An attacker who gains access to UHLD can:
 
 **Always:**
 - ✅ Use **strong, unique passwords** for the UHLD admin account — this is your primary defense
-- ⏳ Enable **2FA (two-factor authentication)** once available — planned, not yet implemented
+- ✅ Enable **TOTP 2FA** or register a **passkey** — both are available in Settings → Account
 - ✅ Keep UHLD on a **private network or VPN** — never expose the web interface directly to the public internet
 - ✅ Access only via **HTTPS with valid certificates** in production
 - ✅ Use **separate credentials** for UHLD that differ from your personal/primary passwords
-- ✅ Limit access to **trusted users only** — use role-based access control (planned)
+- ✅ Limit access to **trusted users only** — use role-based access control (Settings → Users)
 - ✅ Keep UHLD and all connected services **patched and up-to-date**
 - ✅ Regularly **rotate credentials** for service accounts (API keys, tokens, passwords)
 - ✅ Monitor **logs and audit trails** for suspicious activity
@@ -170,6 +178,18 @@ If you discover a security vulnerability, **do not open a public issue.** Please
 | `DATABASE_PATH` | No | SQLite path (default: `/data/uhld.db`) |
 | `TZ` | No | Timezone (default: `America/Montreal`) |
 | `LOG_LEVEL` | No | Python log level (default: `INFO`) |
+| `WEBAUTHN_RP_ID` | No | Passkey relying-party ID — hostname only (auto-derived from request if unset) |
+| `WEBAUTHN_RP_NAME` | No | Display name shown in passkey prompts (default: `UHLD`) |
+| `WEBAUTHN_ORIGIN` | No | Full origin URL for WebAuthn (auto-derived from request if unset) |
+| `OAUTH_BASE_URL` | No | Base URL of this UHLD instance — used for OAuth redirect URIs |
+| `OAUTH_AUTO_PROVISION` | No | `true` to auto-create local accounts on first OAuth login (default: `false`) |
+| `OAUTH_ENTRA_CLIENT_ID` | No | Microsoft Entra ID (Azure AD) app client ID |
+| `OAUTH_ENTRA_CLIENT_SECRET` | No | Microsoft Entra ID app client secret |
+| `OAUTH_ENTRA_TENANT_ID` | No | Entra tenant ID or `common` for multi-tenant |
+| `OAUTH_GOOGLE_CLIENT_ID` | No | Google OAuth 2.0 client ID |
+| `OAUTH_GOOGLE_CLIENT_SECRET` | No | Google OAuth 2.0 client secret |
+| `OAUTH_GITHUB_CLIENT_ID` | No | GitHub OAuth app client ID |
+| `OAUTH_GITHUB_CLIENT_SECRET` | No | GitHub OAuth app client secret |
 
 ---
 

@@ -233,6 +233,13 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    @router.get("/pods/{namespace}/{pod}/detail")
+    async def pod_detail(namespace: str, pod: str):
+        try:
+            return await plugin._fetch_pod_detail(namespace, pod)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     @router.get("/pods/{namespace}/{pod}/logs")
     async def pod_logs(namespace: str, pod: str, container: str = "", tail: int = 200):
         try:
@@ -269,6 +276,34 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
     async def delete_namespace(name: str):
         try:
             return await plugin._delete_namespace(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/nodes/{name}/cordon")
+    async def cordon_node(name: str):
+        try:
+            return await plugin._cordon_node(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/nodes/{name}/uncordon")
+    async def uncordon_node(name: str):
+        try:
+            return await plugin._uncordon_node(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/nodes/{name}/drain")
+    async def drain_node(name: str):
+        try:
+            return await plugin._drain_node(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.delete("/nodes/{name}")
+    async def delete_node(name: str):
+        try:
+            return await plugin._delete_node(name)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 

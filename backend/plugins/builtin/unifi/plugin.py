@@ -378,8 +378,9 @@ class UniFiPlugin(PluginBase):
         client = self._get_client()
         site = self._site_ref()
 
-        # Build network_id → vlan_id lookup from legacy networkconf
+        # Build network_id → vlan_id and name lookup from legacy networkconf
         net_vlan: dict[str, int] = {}
+        net_name: dict[str, str] = {}
         try:
             resp = await client.get(
                 f"/proxy/network/api/s/{site}/rest/networkconf",
@@ -389,6 +390,7 @@ class UniFiPlugin(PluginBase):
                 for n in resp.json().get("data", []):
                     nid = n.get("_id", "")
                     net_vlan[nid] = int(n.get("vlan", 0)) if n.get("vlan_enabled") else 0
+                    net_name[nid] = n.get("name", "")
         except Exception as exc:
             logger.debug("Could not fetch networkconf for VLAN lookup: %s", exc)
 
@@ -428,10 +430,13 @@ class UniFiPlugin(PluginBase):
                     # VLAN is stored as native_networkconf_id → look up vlan_id
                     net_id = override.get("native_networkconf_id", "")
                     vlan_id = net_vlan.get(net_id, 0) if net_id else 0
-                    tagged_ids = override.get("tagged_networkconf_ids") or []
+                    tagged_ids = [t for t in (override.get("tagged_networkconf_ids") or []) if t != "all"]
                     tagged_vlans = sorted(
                         v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
                     )
+                    tagged_network_names = [
+                        net_name[tid] for tid in tagged_ids if net_name.get(tid)
+                    ]
                     ports.append({
                         "device_id": d["id"],
                         "device_name": device_name,
@@ -447,6 +452,7 @@ class UniFiPlugin(PluginBase):
                         "poe_state": poe.get("state", ""),
                         "vlan": vlan_id,
                         "tagged_vlans": tagged_vlans,
+                        "tagged_network_names": tagged_network_names,
                         "rx_bytes": 0,
                         "tx_bytes": 0,
                         "full_duplex": False,
@@ -459,13 +465,15 @@ class UniFiPlugin(PluginBase):
         site = self._site_ref()
         devices_raw = await self._session_get(f"/api/s/{site}/stat/device")
 
-        # Build network_id → vlan_id lookup
+        # Build network_id → vlan_id and name lookup
         net_vlan: dict[str, int] = {}
+        net_name: dict[str, str] = {}
         try:
             nets_resp = await self._session_get(f"/api/s/{site}/rest/networkconf")
             for n in nets_resp.json().get("data", []):
                 nid = n.get("_id", "")
                 net_vlan[nid] = int(n.get("vlan", 0)) if n.get("vlan_enabled") else 0
+                net_name[nid] = n.get("name", "")
         except Exception as exc:
             logger.debug("Could not fetch networkconf for VLAN lookup: %s", exc)
 
@@ -485,10 +493,13 @@ class UniFiPlugin(PluginBase):
                 port_name = override.get("name", "")
                 net_id = override.get("native_networkconf_id", "")
                 vlan_id = net_vlan.get(net_id, 0) if net_id else 0
-                tagged_ids = override.get("tagged_networkconf_ids") or []
+                tagged_ids = [t for t in (override.get("tagged_networkconf_ids") or []) if t != "all"]
                 tagged_vlans = sorted(
                     v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
                 )
+                tagged_network_names = [
+                    net_name[tid] for tid in tagged_ids if net_name.get(tid)
+                ]
                 ports.append({
                     "device_id": device.get("_id", device.get("mac", "")),
                     "device_name": device_name,
@@ -504,6 +515,7 @@ class UniFiPlugin(PluginBase):
                     "poe_state": "UP" if p.get("poe_enable") else "",
                     "vlan": vlan_id,
                     "tagged_vlans": tagged_vlans,
+                    "tagged_network_names": tagged_network_names,
                     "rx_bytes": int(p.get("rx_bytes", 0)),
                     "tx_bytes": int(p.get("tx_bytes", 0)),
                     "full_duplex": bool(p.get("full_duplex", False)),

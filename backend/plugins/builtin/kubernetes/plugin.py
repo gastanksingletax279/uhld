@@ -211,6 +211,7 @@ class KubernetesPlugin(PluginBase):
                     {"type": c.type, "status": c.status, "reason": c.reason or ""}
                     for c in conditions
                 ],
+                "unschedulable": bool(n.spec.unschedulable) if n.spec else False,
             })
         return result
 
@@ -1156,6 +1157,121 @@ class KubernetesPlugin(PluginBase):
         p = await self._run(v1.read_namespaced_pod, pod, namespace)
         return [c.name for c in (p.spec.containers or [])]
 
+    async def _fetch_pod_detail(self, namespace: str, pod: str) -> dict:
+        """Fetch full detail for a single pod: properties, containers, volumes, events."""
+        v1 = self._core_v1()
+        p = await self._run(v1.read_namespaced_pod, pod, namespace)
+
+        def _qty(d) -> dict:
+            if not d:
+                return {}
+            return {k: str(v) for k, v in (d.items() if hasattr(d, "items") else {})}
+
+        def _container_info(c, status) -> dict:
+            state = "Unknown"
+            ready = False
+            restarts = 0
+            if status:
+                ready = bool(status.ready)
+                restarts = int(status.restart_count or 0)
+                s = status.state
+                if s:
+                    if s.running:
+                        state = "Running"
+                    elif s.waiting:
+                        state = f"Waiting ({s.waiting.reason or ''})"
+                    elif s.terminated:
+                        state = f"Terminated ({s.terminated.reason or ''})"
+            res = c.resources or {}
+            return {
+                "name": c.name,
+                "image": c.image or "",
+                "state": state,
+                "ready": ready,
+                "restarts": restarts,
+                "resources": {
+                    "requests": _qty(getattr(res, "requests", None)),
+                    "limits": _qty(getattr(res, "limits", None)),
+                },
+                "ports": [
+                    {"name": pp.name or "", "container_port": pp.container_port, "protocol": pp.protocol or "TCP"}
+                    for pp in (c.ports or [])
+                ],
+                "env_count": len(c.env or []),
+            }
+
+        def _volume_info(v) -> tuple[str, str]:
+            if v.config_map:
+                return "ConfigMap", v.config_map.name or ""
+            if v.secret:
+                return "Secret", v.secret.secret_name or ""
+            if v.persistent_volume_claim:
+                rw = "ro" if v.persistent_volume_claim.read_only else "rw"
+                return "PVC", f"{v.persistent_volume_claim.claim_name} ({rw})"
+            if v.empty_dir:
+                return "EmptyDir", v.empty_dir.medium or "default"
+            if v.host_path:
+                return "HostPath", v.host_path.path or ""
+            if v.downward_api:
+                return "DownwardAPI", ""
+            if v.projected:
+                return "Projected", ""
+            if v.nfs:
+                return "NFS", f"{v.nfs.server}:{v.nfs.path}"
+            return "Volume", ""
+
+        init_statuses = {s.name: s for s in (p.status.init_container_statuses or [])}
+        container_statuses = {s.name: s for s in (p.status.container_statuses or [])}
+        init_containers = [_container_info(c, init_statuses.get(c.name)) for c in (p.spec.init_containers or [])]
+        containers = [_container_info(c, container_statuses.get(c.name)) for c in (p.spec.containers or [])]
+
+        volumes: list[dict] = []
+        for vol in (p.spec.volumes or []):
+            vtype, vsource = _volume_info(vol)
+            volumes.append({"name": vol.name, "type": vtype, "source": vsource})
+
+        evts = await self._run(
+            v1.list_namespaced_event, namespace,
+            field_selector=f"involvedObject.name={pod},involvedObject.kind=Pod",
+        )
+        events = sorted(
+            [
+                {
+                    "type": e.type or "",
+                    "reason": e.reason or "",
+                    "message": e.message or "",
+                    "count": e.count or 1,
+                    "last_time": _ts(e.last_timestamp),
+                }
+                for e in evts.items
+            ],
+            key=lambda x: x["last_time"],
+            reverse=True,
+        )
+        annotations = {
+            k: v
+            for k, v in (p.metadata.annotations or {}).items()
+            if not k.startswith("kubectl.kubernetes.io/last-applied")
+        }
+        return {
+            "name": p.metadata.name,
+            "namespace": p.metadata.namespace,
+            "node": p.spec.node_name or "",
+            "ip": p.status.pod_ip or "",
+            "host_ip": p.status.host_ip or "",
+            "phase": p.status.phase or "Unknown",
+            "qos_class": p.status.qos_class or "",
+            "service_account": p.spec.service_account_name or "",
+            "priority": p.spec.priority or 0,
+            "created": _ts(p.metadata.creation_timestamp),
+            "labels": dict(p.metadata.labels or {}),
+            "annotations": annotations,
+            "init_containers": init_containers,
+            "containers": containers,
+            "volumes": volumes,
+            "events": events,
+        }
+
     async def _restart_pod(self, namespace: str, pod: str) -> None:
         from kubernetes import client  # type: ignore[import]
         v1 = self._core_v1()
@@ -1269,6 +1385,54 @@ class KubernetesPlugin(PluginBase):
         v1 = self._core_v1()
         await self._run(v1.delete_namespace, name, body=client.V1DeleteOptions())
         return {"ok": True, "name": name}
+
+    # ── Node maintenance ──────────────────────────────────────────────────────
+
+    async def _cordon_node(self, name: str) -> dict:
+        v1 = self._core_v1()
+        await self._run(v1.patch_node, name, {"spec": {"unschedulable": True}})
+        return {"ok": True}
+
+    async def _uncordon_node(self, name: str) -> dict:
+        v1 = self._core_v1()
+        await self._run(v1.patch_node, name, {"spec": {"unschedulable": False}})
+        return {"ok": True}
+
+    async def _drain_node(self, name: str) -> dict:
+        """Cordon the node then evict all evictable (non-DaemonSet, non-mirror) pods."""
+        await self._cordon_node(name)
+        v1 = self._core_v1()
+        pods_resp = await self._run(
+            v1.list_pod_for_all_namespaces,
+            field_selector=f"spec.nodeName={name}",
+        )
+        evicted: list[str] = []
+        skipped: list[str] = []
+        errors: list[str] = []
+        for pod in pods_resp.items:
+            pname = pod.metadata.name
+            ns = pod.metadata.namespace
+            owners = pod.metadata.owner_references or []
+            if any(o.kind == "DaemonSet" for o in owners):
+                skipped.append(pname)
+                continue
+            if "kubernetes.io/config.mirror" in (pod.metadata.annotations or {}):
+                skipped.append(pname)
+                continue
+            try:
+                from kubernetes.client import V1Eviction, V1ObjectMeta  # type: ignore[import]
+                eviction = V1Eviction(metadata=V1ObjectMeta(name=pname, namespace=ns))
+                await self._run(v1.create_namespaced_pod_eviction, pname, ns, eviction)
+                evicted.append(pname)
+            except Exception as exc:
+                errors.append(f"{pname}: {exc}")
+        return {"ok": True, "evicted": evicted, "skipped": skipped, "errors": errors}
+
+    async def _delete_node(self, name: str) -> dict:
+        from kubernetes import client  # type: ignore[import]
+        v1 = self._core_v1()
+        await self._run(v1.delete_node, name, body=client.V1DeleteOptions())
+        return {"ok": True}
 
     # ── Access control ────────────────────────────────────────────────────────
 

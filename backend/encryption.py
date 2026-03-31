@@ -30,6 +30,18 @@ def decrypt_config(token: str) -> dict:
     return json.loads(f.decrypt(token.encode()).decode())
 
 
+def encrypt_value(value: str) -> str:
+    """Encrypt a plain string (e.g. TOTP secret) to a Fernet token string."""
+    f = _get_fernet()
+    return f.encrypt(value.encode()).decode()
+
+
+def decrypt_value(token: str) -> str:
+    """Decrypt a Fernet token string back to a plain string."""
+    f = _get_fernet()
+    return f.decrypt(token.encode()).decode()
+
+
 def mask_sensitive(config: dict, schema: dict) -> dict:
     """Return a copy of config with sensitive fields masked."""
     masked = dict(config)

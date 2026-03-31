@@ -1,7 +1,10 @@
 import { Link, useLocation } from 'react-router-dom'
 import { PluginManager } from '../components/Settings/PluginManager'
 import { BackupSettings } from '../components/Settings/BackupSettings'
-import { Puzzle, Sliders, Database } from 'lucide-react'
+import { AccountSettings } from '../components/Settings/AccountSettings'
+import { UserManagement } from '../components/Settings/UserManagement'
+import { useAuthStore } from '../store/authStore'
+import { Puzzle, Sliders, Database, UserCircle, Users } from 'lucide-react'
 
 interface SettingsPageProps {
   tab?: string
@@ -9,24 +12,33 @@ interface SettingsPageProps {
 
 export function SettingsPage({ tab }: SettingsPageProps) {
   const location = useLocation()
+  const user = useAuthStore((s) => s.user)
   const activeTab = tab ?? (
     location.pathname.includes('plugins') ? 'plugins' :
     location.pathname.includes('backup') ? 'backup' :
+    location.pathname.includes('users') ? 'users' :
+    location.pathname.includes('account') ? 'account' :
     'general'
   )
 
   return (
     <div className="max-w-6xl space-y-4">
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-surface-4 pb-0">
+      <div className="flex gap-1 border-b border-surface-4 pb-0 flex-wrap">
         <TabLink to="/settings" icon={<Sliders className="w-4 h-4" />} label="General" active={activeTab === 'general'} />
         <TabLink to="/settings/plugins" icon={<Puzzle className="w-4 h-4" />} label="Plugins" active={activeTab === 'plugins'} />
         <TabLink to="/settings/backup" icon={<Database className="w-4 h-4" />} label="Backup" active={activeTab === 'backup'} />
+        <TabLink to="/settings/account" icon={<UserCircle className="w-4 h-4" />} label="Account" active={activeTab === 'account'} />
+        {user?.role === 'admin' && (
+          <TabLink to="/settings/users" icon={<Users className="w-4 h-4" />} label="Users" active={activeTab === 'users'} />
+        )}
       </div>
 
       {activeTab === 'plugins' && <PluginManager />}
       {activeTab === 'general' && <GeneralSettings />}
       {activeTab === 'backup' && <BackupSettings />}
+      {activeTab === 'account' && <AccountSettings />}
+      {activeTab === 'users' && user?.role === 'admin' && <UserManagement />}
     </div>
   )
 }

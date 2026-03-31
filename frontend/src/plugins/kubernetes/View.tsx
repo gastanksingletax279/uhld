@@ -11,6 +11,7 @@ import {
   K8sServiceAccount, K8sRole, K8sClusterRole, K8sRoleBinding, K8sClusterRoleBinding,
   K8sHelmRelease,
   K8sCRD, K8sResourceQuota, K8sLimitRange, K8sPriorityClass, K8sPDB,
+  K8sPodDetail,
 } from '../../api/client'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 import {
@@ -18,6 +19,7 @@ import {
   RotateCcw, ScrollText, X, ChevronUp, ChevronDown, ChevronsUpDown,
   Plus, Minus, Terminal, FileCode, Check, ShieldCheck, Eye, EyeOff,
   LayoutDashboard, Trash2, Package, UserCog,
+  Lock, Unlock, LogOut, Info,
 } from 'lucide-react'
 
 // ── Tab/Group types ────────────────────────────────────────────────────────
@@ -98,6 +100,9 @@ function sorted<T>(data: T[], sort: SortState): T[] {
 
 // ── Confirm modal ──────────────────────────────────────────────────────────
 type ConfirmModal = { title: string; message: string; items?: string[]; confirmLabel?: string; confirmClass?: string; onConfirm: () => void }
+
+// ── Pod detail modal ───────────────────────────────────────────────────────
+type PodDetailModalState = { pod: K8sPod; detail: K8sPodDetail | null; loading: boolean; error: string | null }
 
 // ── Secret data modal ──────────────────────────────────────────────────────
 type SecretDataModal = {
@@ -181,6 +186,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [yamlModal,       setYamlModal]       = useState<YamlModal | null>(null)
   const [secretDataModal, setSecretDataModal] = useState<SecretDataModal | null>(null)
   const [confirmModal,    setConfirmModal]    = useState<ConfirmModal | null>(null)
+  const [podDetailModal,  setPodDetailModal]  = useState<PodDetailModalState | null>(null)
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   async function load<T>(setter: React.Dispatch<React.SetStateAction<TabState<T>>>, fetcher: () => Promise<unknown>, key: string) {
@@ -464,6 +470,74 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     } finally { setActionLoading(null) }
   }
 
+  async function openPodDetail(pod: K8sPod) {
+    setPodDetailModal({ pod, detail: null, loading: true, error: null })
+    try {
+      const detail = await k8s.podDetail(pod.namespace, pod.name)
+      setPodDetailModal((m) => m ? { ...m, detail, loading: false } : null)
+    } catch (e: unknown) {
+      setPodDetailModal((m) => m ? { ...m, loading: false, error: e instanceof Error ? e.message : 'Failed to load pod details' } : null)
+    }
+  }
+
+  async function cordonNode(name: string) {
+    setActionLoading(`cordon:${name}`); setActionError(null)
+    try {
+      await k8s.cordonNode(name)
+      loadTab('nodes', '', true)
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Cordon failed')
+    } finally { setActionLoading(null) }
+  }
+
+  async function uncordonNode(name: string) {
+    setActionLoading(`uncordon:${name}`); setActionError(null)
+    try {
+      await k8s.uncordonNode(name)
+      loadTab('nodes', '', true)
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Uncordon failed')
+    } finally { setActionLoading(null) }
+  }
+
+  function promptDrainNode(name: string) {
+    setConfirmModal({
+      title: `Drain node "${name}"?`,
+      message: `This will cordon the node (mark as unschedulable) and evict all non-DaemonSet pods. Pods will be rescheduled on other nodes if possible.`,
+      confirmLabel: 'Drain',
+      confirmClass: 'bg-orange-600 hover:bg-orange-600/80',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setActionLoading(`drain:${name}`); setActionError(null)
+        try {
+          await k8s.drainNode(name)
+          loadTab('nodes', '', true)
+          loadTab('pods', nsFilter, true)
+        } catch (e: unknown) {
+          setActionError(e instanceof Error ? e.message : 'Drain failed')
+        } finally { setActionLoading(null) }
+      },
+    })
+  }
+
+  function promptDeleteNode(name: string) {
+    setConfirmModal({
+      title: `Delete node "${name}"?`,
+      message: `This will remove the node object from the Kubernetes cluster. The machine itself will not be deleted, but it will be deregistered. Drain the node first to safely reschedule pods.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setActionLoading(`delete-node:${name}`); setActionError(null)
+        try {
+          await k8s.deleteNode(name)
+          loadTab('nodes', '', true)
+        } catch (e: unknown) {
+          setActionError(e instanceof Error ? e.message : 'Delete node failed')
+        } finally { setActionLoading(null) }
+      },
+    })
+  }
+
   function promptDeleteNamespace(name: string) {
     setConfirmModal({
       title: `Delete namespace "${name}"?`,
@@ -600,10 +674,10 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
 
       {/* Content */}
       {tab === 'overview'      && <OverviewPanel      state={overview} onRefresh={() => { setOverview(emptyOverview()); loadTab('overview', '', true) }} />}
-      {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} />}
+      {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} onCordon={cordonNode} onUncordon={uncordonNode} onDrain={promptDrainNode} onDelete={promptDeleteNode} actionLoading={actionLoading} />}
       {tab === 'namespaces'    && <NamespacesTable    state={namespaces}    actionLoading={actionLoading} onDelete={promptDeleteNamespace} />}
       {tab === 'crds'          && <CRDsTable          state={crds} />}
-      {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} selected={selectedPods} onSelect={setSelectedPods} onBulkRestart={bulkRestartPods} />}
+      {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} onDetail={openPodDetail} selected={selectedPods} onSelect={setSelectedPods} onBulkRestart={bulkRestartPods} />}
       {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onRestart={(d) => restartWorkload('deployment', d.namespace, d.name)} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} />}
       {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  actionLoading={actionLoading} onRestart={(s) => restartWorkload('statefulset', s.namespace, s.name)} onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} />}
       {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    actionLoading={actionLoading} onRestart={(d) => restartWorkload('daemonset', d.namespace, d.name)} onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} />}
@@ -765,6 +839,213 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
            />}
         </Modal>
       )}
+
+      {/* Pod detail modal */}
+      {podDetailModal && (
+        <PodDetailModal
+          pod={podDetailModal.pod}
+          detail={podDetailModal.detail}
+          loading={podDetailModal.loading}
+          error={podDetailModal.error}
+          onClose={() => setPodDetailModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Pod Detail Modal ───────────────────────────────────────────────────────
+
+type PodDetailTab = 'properties' | 'containers' | 'volumes' | 'events'
+
+function PodDetailModal({ pod, detail, loading, error, onClose }: {
+  pod: K8sPod; detail: K8sPodDetail | null; loading: boolean; error: string | null; onClose: () => void
+}) {
+  const [tab, setTab] = useState<PodDetailTab>('properties')
+  return (
+    <Modal title={pod.name} subtitle={pod.namespace} icon={<Info className="w-4 h-4 text-muted" />} onClose={onClose} wide>
+      {loading ? <ModalLoading label="Loading pod details…" /> :
+       error   ? <ErrorBanner msg={error} /> :
+       detail  ? (
+        <div className="flex flex-col" style={{ minHeight: 0 }}>
+          <div className="flex gap-1 border-b border-surface-4 px-1 pt-1 flex-shrink-0">
+            {(['properties', 'containers', 'volumes', 'events'] as PodDetailTab[]).map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-3 py-2 text-xs font-medium capitalize border-b-2 -mb-px transition-colors ${tab === t ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-gray-300'}`}>
+                {t}
+                {t === 'containers' && (detail.init_containers.length + detail.containers.length) > 0 && (
+                  <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.init_containers.length + detail.containers.length}</span>
+                )}
+                {t === 'volumes' && detail.volumes.length > 0 && <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.volumes.length}</span>}
+                {t === 'events'  && detail.events.length  > 0 && <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.events.length}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="overflow-y-auto p-4">
+            {tab === 'properties' && <PodPropertiesTab  detail={detail} />}
+            {tab === 'containers' && <PodContainersTab detail={detail} />}
+            {tab === 'volumes'    && <PodVolumesTab    detail={detail} />}
+            {tab === 'events'     && <PodEventsTab     detail={detail} />}
+          </div>
+        </div>
+       ) : null}
+    </Modal>
+  )
+}
+
+function PodPropertiesTab({ detail }: { detail: K8sPodDetail }) {
+  const props = [
+    { label: 'Name',            value: detail.name },
+    { label: 'Namespace',       value: detail.namespace },
+    { label: 'Phase',           value: detail.phase },
+    { label: 'Node',            value: detail.node || '—' },
+    { label: 'Pod IP',          value: detail.ip || '—' },
+    { label: 'Host IP',         value: detail.host_ip || '—' },
+    { label: 'QoS Class',       value: detail.qos_class || '—' },
+    { label: 'Service Account', value: detail.service_account || 'default' },
+    { label: 'Priority',        value: String(detail.priority) },
+    { label: 'Age',             value: fmtAge(detail.created) },
+  ]
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+        {props.map(({ label, value }) => (
+          <div key={label}>
+            <div className="text-[10px] text-muted uppercase tracking-wide">{label}</div>
+            <div className="text-sm font-mono text-gray-200 mt-0.5 break-all">{value}</div>
+          </div>
+        ))}
+      </div>
+      {Object.keys(detail.labels).length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Labels</div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(detail.labels).map(([k, v]) => (
+              <span key={k} className="text-[10px] font-mono bg-surface-3 rounded px-2 py-0.5">
+                <span className="text-accent">{k}</span>=<span className="text-gray-300">{v}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {Object.keys(detail.annotations).length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Annotations</div>
+          <div className="space-y-1">
+            {Object.entries(detail.annotations).map(([k, v]) => (
+              <div key={k} className="text-[10px] font-mono bg-surface-3 rounded px-2 py-1 break-all">
+                <span className="text-muted">{k}</span>: <span className="text-gray-300">{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ContainerStateBadge({ state }: { state: string }) {
+  if (state === 'Running')               return <span className="badge-ok text-[10px]">running</span>
+  if (state.startsWith('Terminated'))    return <span className="badge-error text-[10px]">{state}</span>
+  if (state.startsWith('Waiting'))       return <span className="text-[10px] bg-yellow-500/15 text-yellow-300 rounded px-1.5 py-0.5">{state}</span>
+  return <span className="badge-muted text-[10px]">{state}</span>
+}
+
+function PodContainersTab({ detail }: { detail: K8sPodDetail }) {
+  const all = [
+    ...detail.init_containers.map((c) => ({ ...c, isInit: true })),
+    ...detail.containers.map((c) => ({ ...c, isInit: false })),
+  ]
+  if (all.length === 0) return <div className="text-sm text-muted text-center py-8">No containers found.</div>
+  return (
+    <div className="space-y-3">
+      {all.map((c) => (
+        <div key={`${c.name}-${c.isInit}`} className="card p-3 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {c.isInit && <span className="text-[10px] bg-purple-500/20 text-purple-300 rounded px-1.5 py-0.5">init</span>}
+            <span className="font-semibold text-sm text-white">{c.name}</span>
+            <ContainerStateBadge state={c.state} />
+            {c.ready ? <span className="badge-ok text-[10px]">ready</span> : <span className="text-[10px] bg-surface-4 text-muted rounded px-1.5 py-0.5">not ready</span>}
+            {c.restarts > 0 && <span className="text-[10px] bg-yellow-500/15 text-yellow-300 rounded px-1.5 py-0.5">{c.restarts} restart{c.restarts !== 1 ? 's' : ''}</span>}
+          </div>
+          <div className="font-mono text-xs text-muted break-all">{c.image}</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div className="text-[10px] text-muted uppercase mb-1">Requests</div>
+              {Object.keys(c.resources.requests).length > 0
+                ? Object.entries(c.resources.requests).map(([k, v]) => (
+                    <div key={k} className="font-mono text-gray-400"><span className="text-muted">{k}:</span> {v}</div>
+                  ))
+                : <div className="text-muted text-[10px] italic">none</div>}
+            </div>
+            <div>
+              <div className="text-[10px] text-muted uppercase mb-1">Limits</div>
+              {Object.keys(c.resources.limits).length > 0
+                ? Object.entries(c.resources.limits).map(([k, v]) => (
+                    <div key={k} className="font-mono text-gray-400"><span className="text-muted">{k}:</span> {v}</div>
+                  ))
+                : <div className="text-muted text-[10px] italic">none</div>}
+            </div>
+          </div>
+          {c.ports.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {c.ports.map((pp, i) => (
+                <span key={i} className="text-[10px] font-mono bg-surface-3 rounded px-1.5 py-0.5 text-muted">
+                  {pp.name ? `${pp.name}: ` : ''}{pp.container_port}/{pp.protocol}
+                </span>
+              ))}
+            </div>
+          )}
+          {c.env_count > 0 && <div className="text-[10px] text-muted">{c.env_count} env var{c.env_count !== 1 ? 's' : ''}</div>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PodVolumesTab({ detail }: { detail: K8sPodDetail }) {
+  if (detail.volumes.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No volumes mounted.</div>
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-surface-4 text-muted">
+            <th className="px-3 py-2 text-left font-medium">Name</th>
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-left font-medium">Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {detail.volumes.map((v, i) => (
+            <tr key={i} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+              <td className="px-3 py-2 font-mono text-gray-300">{v.name}</td>
+              <td className="px-3 py-2"><span className="text-xs bg-surface-3 rounded px-1.5 py-0.5 text-muted">{v.type}</span></td>
+              <td className="px-3 py-2 font-mono text-muted">{v.source || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PodEventsTab({ detail }: { detail: K8sPodDetail }) {
+  if (detail.events.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No events found for this pod.</div>
+  return (
+    <div className="space-y-1.5">
+      {detail.events.map((e, i) => (
+        <div key={i} className={`text-xs rounded p-2.5 border ${e.type === 'Warning' ? 'bg-yellow-500/5 border-yellow-500/20' : 'bg-surface-3 border-surface-4'}`}>
+          <div className="flex items-start gap-2 flex-wrap">
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${e.type === 'Warning' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/20 text-blue-300'}`}>{e.type}</span>
+            <span className="font-semibold text-gray-300">{e.reason}</span>
+            {e.count > 1 && <span className="text-muted text-[10px]">×{e.count}</span>}
+            <span className="text-muted text-[10px] ml-auto whitespace-nowrap">{fmtAge(e.last_time)}</span>
+          </div>
+          <div className="text-muted mt-1 break-words">{e.message}</div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -1035,7 +1316,14 @@ function LonghornNodesTable({ state }: { state: TabState<K8sLonghornNode> }) {
 
 // ── Table components ───────────────────────────────────────────────────────
 
-function NodesTable({ state, onYaml }: { state: TabState<K8sNode>; onYaml: (n: K8sNode) => void }) {
+function NodesTable({ state, onYaml, onCordon, onUncordon, onDrain, onDelete, actionLoading }: {
+  state: TabState<K8sNode>; onYaml: (n: K8sNode) => void
+  onCordon:   (name: string) => void
+  onUncordon: (name: string) => void
+  onDrain:    (name: string) => void
+  onDelete:   (name: string) => void
+  actionLoading: string | null
+}) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'status', label: 'Status' },
@@ -1043,7 +1331,7 @@ function NodesTable({ state, onYaml }: { state: TabState<K8sNode>; onYaml: (n: K
     { key: 'os_image', label: 'OS' }, { key: 'created', label: 'Age' },
   ]
   return (
-    <DataTable state={state} emptyMsg="No nodes found." cols={cols} sort={sort} onSort={toggle} extraCols={['Roles', '']}>
+    <DataTable state={state} emptyMsg="No nodes found." cols={cols} sort={sort} onSort={toggle} extraCols={['Roles', 'Scheduling', '']}>
       {sorted(state.data, sort).map((n) => (
         <tr key={n.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
           <td className="px-3 py-2 font-medium text-gray-200">{n.name}</td>
@@ -1055,7 +1343,21 @@ function NodesTable({ state, onYaml }: { state: TabState<K8sNode>; onYaml: (n: K
           <td className="px-3 py-2">
             <div className="flex flex-wrap gap-1">{n.roles.map((r) => <span key={r} className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300">{r}</span>)}</div>
           </td>
-          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(n)} /></td>
+          <td className="px-3 py-2">
+            {n.unschedulable
+              ? <span className="text-xs font-semibold text-yellow-300 bg-yellow-500/15 px-1.5 py-0.5 rounded">Cordoned</span>
+              : <span className="text-xs text-muted">Schedulable</span>}
+          </td>
+          <td className="px-3 py-2">
+            <div className="flex items-center gap-1">
+              {n.unschedulable
+                ? <ActionBtn title="Uncordon node"  onClick={() => onUncordon(n.name)} loading={actionLoading === `uncordon:${n.name}`} icon={<Unlock  className="w-3.5 h-3.5" />} hoverColor="hover:text-green-400" />
+                : <ActionBtn title="Cordon node"    onClick={() => onCordon(n.name)}   loading={actionLoading === `cordon:${n.name}`}   icon={<Lock    className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />}
+              <ActionBtn title="Drain node"   onClick={() => onDrain(n.name)}   loading={actionLoading === `drain:${n.name}`}        icon={<LogOut  className="w-3.5 h-3.5" />} hoverColor="hover:text-orange-400" />
+              <ActionBtn title="Delete node"  onClick={() => onDelete(n.name)}  loading={actionLoading === `delete-node:${n.name}`}  icon={<Trash2  className="w-3.5 h-3.5" />} hoverColor="hover:text-danger" />
+              <YamlBtn onClick={() => onYaml(n)} />
+            </div>
+          </td>
         </tr>
       ))}
     </DataTable>
@@ -1087,12 +1389,13 @@ function NamespacesTable({ state, actionLoading, onDelete }: {
   )
 }
 
-function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, selected, onSelect, onBulkRestart }: {
+function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, onDetail, selected, onSelect, onBulkRestart }: {
   state: TabState<K8sPod>; actionLoading: string | null
   onRestart: (ns: string, pod: string) => void
   onLogs:    (ns: string, pod: string) => void
   onShell:   (ns: string, pod: string) => void
   onYaml:    (p: K8sPod) => void
+  onDetail:  (p: K8sPod) => void
   selected:  Set<string>
   onSelect:  (s: Set<string>) => void
   onBulkRestart: (pods: K8sPod[]) => void
@@ -1153,7 +1456,9 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, s
           return (
             <tr key={podKey} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
               <td className="px-3 py-2 w-8"><input type="checkbox" checked={selected.has(podKey)} onChange={(e) => toggleOne(podKey, idx, (e.nativeEvent as MouseEvent).shiftKey)} className="cursor-pointer" /></td>
-              <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={p.name}>{p.name}</td>
+              <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={p.name}>
+                <button onClick={() => onDetail(p)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{p.name}</button>
+              </td>
               <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
               <td className="px-3 py-2 font-mono text-muted">{p.ready}</td>
               <td className="px-3 py-2"><PodStatusBadge status={p.status} /></td>
@@ -1163,6 +1468,7 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, s
               <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1">
+                  <ActionBtn title="Pod details"  onClick={() => onDetail(p)}                        loading={false}                icon={<Info       className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
                   <ActionBtn title="View Logs"   onClick={() => onLogs(p.namespace, p.name)}    loading={false}                icon={<ScrollText className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
                   {isRunning && <ActionBtn title="Shell" onClick={() => onShell(p.namespace, p.name)} loading={false} icon={<Terminal className="w-3.5 h-3.5" />} hoverColor="hover:text-green-400" />}
                   <ActionBtn title="Restart Pod" onClick={() => onRestart(p.namespace, p.name)} loading={actionLoading === key} icon={<RotateCcw  className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />

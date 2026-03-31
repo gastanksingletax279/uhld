@@ -37,7 +37,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   // Auth
   login: (username: string, password: string) =>
-    request<{ message: string; user: User }>('/api/auth/login', {
+    request<{ message: string; user: User } | { requires_totp: true; partial_token: string }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
@@ -50,6 +50,71 @@ export const api = {
     request<{ message: string }>('/api/auth/password', {
       method: 'PUT',
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
+  // TOTP 2FA
+  totpSetup: () => request<{ secret: string; uri: string }>('/api/auth/totp/setup'),
+  totpVerify: (secret: string, code: string) =>
+    request<{ message: string }>('/api/auth/totp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ secret, code }),
+    }),
+  totpDisable: (code: string) =>
+    request<{ message: string }>('/api/auth/totp', {
+      method: 'DELETE',
+      body: JSON.stringify({ code }),
+    }),
+  totpLogin: (partialToken: string, code: string) =>
+    request<{ message: string; user: User }>('/api/auth/totp/login', {
+      method: 'POST',
+      body: JSON.stringify({ partial_token: partialToken, code }),
+    }),
+
+  // Passkeys (WebAuthn)
+  listPasskeys: () => request<{ passkeys: Passkey[] }>('/api/auth/passkeys'),
+  deletePasskey: (id: number) =>
+    request<{ message: string }>(`/api/auth/passkey/${id}`, { method: 'DELETE' }),
+  renamePasskey: (id: number, name: string) =>
+    request<{ message: string }>(`/api/auth/passkey/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  passkeyRegisterBegin: () =>
+    request<{ challenge_token: string; options: PublicKeyCredentialCreationOptionsJSON }>('/api/auth/passkey/register/begin', { method: 'POST' }),
+  passkeyRegisterComplete: (challengeToken: string, credential: RegistrationResponseJSON, name: string) =>
+    request<{ message: string; id: number }>('/api/auth/passkey/register/complete', {
+      method: 'POST',
+      body: JSON.stringify({ challenge_token: challengeToken, credential, name }),
+    }),
+  passkeyLoginBegin: () =>
+    request<{ challenge_token: string; options: PublicKeyCredentialRequestOptionsJSON }>('/api/auth/passkey/login/begin', { method: 'POST' }),
+  passkeyLoginComplete: (challengeToken: string, credential: AuthenticationResponseJSON) =>
+    request<{ message: string; user: User }>('/api/auth/passkey/login/complete', {
+      method: 'POST',
+      body: JSON.stringify({ challenge_token: challengeToken, ...credential }),
+    }),
+
+  // OAuth providers
+  oauthProviders: () => request<{ providers: OAuthProvider[] }>('/api/auth/oauth/providers'),
+
+  // User management (admin only)
+  listUsers: () => request<{ users: ManagedUser[] }>('/api/users/'),
+  createUser: (username: string, password: string, role: 'admin' | 'viewer') =>
+    request<{ message: string; user: ManagedUser }>('/api/users/', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role }),
+    }),
+  updateUser: (id: number, updates: { role?: 'admin' | 'viewer'; is_active?: boolean }) =>
+    request<{ message: string }>(`/api/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    }),
+  deleteUser: (id: number) =>
+    request<void>(`/api/users/${id}`, { method: 'DELETE' }),
+  adminResetPassword: (id: number, password: string) =>
+    request<{ message: string }>(`/api/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
     }),
 
   // Plugins
@@ -299,6 +364,18 @@ export const api = {
       // Namespace delete
       deleteNamespace:   (name: string) =>
         request<{ ok: boolean }>(`${p}/namespaces/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+      // Pod detail
+      podDetail:         (namespace: string, pod: string) =>
+        request<K8sPodDetail>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/detail`),
+      // Node maintenance
+      cordonNode:        (name: string) =>
+        request<{ ok: boolean }>(`${p}/nodes/${encodeURIComponent(name)}/cordon`, { method: 'POST' }),
+      uncordonNode:      (name: string) =>
+        request<{ ok: boolean }>(`${p}/nodes/${encodeURIComponent(name)}/uncordon`, { method: 'POST' }),
+      drainNode:         (name: string) =>
+        request<{ ok: boolean; evicted: string[]; skipped: string[]; errors: string[] }>(`${p}/nodes/${encodeURIComponent(name)}/drain`, { method: 'POST' }),
+      deleteNode:        (name: string) =>
+        request<{ ok: boolean }>(`${p}/nodes/${encodeURIComponent(name)}`, { method: 'DELETE' }),
       // Realtime log stream WS URL
       podLogsStreamWsUrl: (namespace: string, pod: string, container = '') => {
         const base = p.replace(/^\/api/, '')
@@ -413,11 +490,45 @@ export const api = {
 
 // --- Types ---
 
+// WebAuthn JSON types (browser credential types are opaque objects; we pass them as-is)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PublicKeyCredentialCreationOptionsJSON = Record<string, any>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type RegistrationResponseJSON = Record<string, any>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PublicKeyCredentialRequestOptionsJSON = Record<string, any>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AuthenticationResponseJSON = Record<string, any>
+
 export interface User {
   id: number
   username: string
   is_admin: boolean
+  role: 'admin' | 'viewer'
+  totp_enabled: boolean
   needs_setup: boolean
+}
+
+export interface ManagedUser {
+  id: number
+  username: string
+  is_admin: boolean
+  role: 'admin' | 'viewer'
+  is_active: boolean
+  totp_enabled: boolean
+}
+
+export interface OAuthProvider {
+  id: string
+  name: string
+}
+
+export interface Passkey {
+  id: number
+  name: string
+  aaguid: string | null
+  created_at: string | null
+  last_used: string | null
 }
 
 export interface PluginListItem {
@@ -710,6 +821,7 @@ export interface K8sNode {
   os_image: string
   container_runtime: string
   conditions: K8sCondition[]
+  unschedulable: boolean
 }
 
 export interface K8sPod {
@@ -721,6 +833,36 @@ export interface K8sPod {
   node: string
   ip: string
   created: string
+}
+
+export interface K8sContainerDetail {
+  name: string
+  image: string
+  state: string
+  ready: boolean
+  restarts: number
+  resources: { requests: Record<string, string>; limits: Record<string, string> }
+  ports: { name: string; container_port: number; protocol: string }[]
+  env_count: number
+}
+
+export interface K8sPodDetail {
+  name: string
+  namespace: string
+  node: string
+  ip: string
+  host_ip: string
+  phase: string
+  qos_class: string
+  service_account: string
+  priority: number
+  created: string
+  labels: Record<string, string>
+  annotations: Record<string, string>
+  init_containers: K8sContainerDetail[]
+  containers: K8sContainerDetail[]
+  volumes: { name: string; type: string; source: string }[]
+  events: { type: string; reason: string; message: string; count: number; last_time: string }[]
 }
 
 export interface K8sNamespace {
@@ -1098,6 +1240,7 @@ export interface UniFiPort {
   poe_state: string
   vlan: number
   tagged_vlans: number[]
+  tagged_network_names: string[]
   rx_bytes: number
   tx_bytes: number
   full_duplex: boolean

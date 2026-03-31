@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   api,
   UniFiClient, UniFiDevice, UniFiPort,
@@ -153,6 +153,7 @@ export function UniFiView({ instanceId = 'default' }: { instanceId?: string }) {
 
   useEffect(() => {
     if (tab === 'ports'    && !portsLoaded    && !portsLoading)    loadPorts()
+    if (tab === 'ports'    && !networksLoaded && !networksLoading) loadNetworks()
     if (tab === 'networks' && !networksLoaded && !networksLoading) loadNetworks()
     if (tab === 'wlans'    && !wlansLoaded    && !wlansLoading)    loadWlans()
     if (tab === 'firewall' && !firewallLoaded && !firewallLoading) loadFirewall()
@@ -220,7 +221,7 @@ export function UniFiView({ instanceId = 'default' }: { instanceId?: string }) {
 
       {tab === 'clients'  && (clientsLoading  ? <SectionLoader /> : clientsError  ? <SectionError msg={clientsError} />  : <ClientsTab  clients={clients}  onRefresh={loadClients} onKick={(id) => unifi.kickClient(id)} />)}
       {tab === 'devices'  && (devicesLoading  ? <SectionLoader /> : devicesError  ? <SectionError msg={devicesError} />  : <DevicesTab  devices={devices} />)}
-      {tab === 'ports'    && (portsLoading    ? <SectionLoader /> : portsError    ? <SectionError msg={portsError} />    : <PortsTab    ports={ports} />)}
+      {tab === 'ports'    && (portsLoading    ? <SectionLoader /> : portsError    ? <SectionError msg={portsError} />    : <PortsTab    ports={ports} networks={networks} />)}
       {tab === 'networks' && (networksLoading ? <SectionLoader /> : networksError ? <SectionError msg={networksError} /> : <NetworksTab networks={networks} />)}
       {tab === 'wlans'    && (wlansLoading    ? <SectionLoader /> : wlansError    ? <SectionError msg={wlansError} />    : <WlansTab    wlans={wlans} />)}
       {tab === 'firewall' && (firewallLoading ? <SectionLoader /> : firewallError ? <SectionError msg={firewallError} /> : <FirewallTab  rules={fwRules} groups={fwGroups} zones={fwZones} />)}
@@ -490,11 +491,34 @@ function DevicesTab({ devices }: { devices: UniFiDevice[] }) {
 
 // ── Ports tab ─────────────────────────────────────────────────────────────────
 
-function PortsTab({ ports }: { ports: UniFiPort[] }) {
+function PortsTab({ ports, networks }: { ports: UniFiPort[], networks: UniFiNetwork[] }) {
+  const [modeFilter, setModeFilter] = useState<'all' | 'trunk' | 'access'>('all')
+  const [search, setSearch] = useState('')
+
+  const vlanMap = useMemo(
+    () => new Map(networks.filter((n) => n.vlan_id > 0).map((n) => [n.vlan_id, n.name])),
+    [networks]
+  )
+
   if (ports.length === 0)
     return <div className="text-sm text-muted text-center py-12">No switch ports found. Ports are fetched from adopted switch devices.</div>
 
-  const byDevice = ports.reduce<Record<string, UniFiPort[]>>((acc, p) => {
+  const isTrunk = (p: UniFiPort) =>
+    (p.tagged_vlans?.length ?? 0) > 0 || (p.tagged_network_names?.length ?? 0) > 0
+
+  const filtered = ports.filter((p) => {
+    if (modeFilter === 'trunk'  && !isTrunk(p)) return false
+    if (modeFilter === 'access' &&  isTrunk(p)) return false
+    if (search) {
+      const q = search.toLowerCase()
+      if (!p.name?.toLowerCase().includes(q) &&
+          !p.description?.toLowerCase().includes(q) &&
+          !p.device_name?.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
+  const byDevice = filtered.reduce<Record<string, UniFiPort[]>>((acc, p) => {
     ;(acc[p.device_name] ??= []).push(p)
     return acc
   }, {})
@@ -503,8 +527,35 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
   const hasPoe       = ports.some((p) => p.poe_enabled)
   const hasConnector = ports.some((p) => p.connector)
 
+  const vlanLabel = (id: number) => vlanMap.has(id) ? `${id} — ${vlanMap.get(id)}` : String(id)
+
   return (
     <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded overflow-hidden border border-surface-4 text-xs">
+          {(['all', 'trunk', 'access'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setModeFilter(m)}
+              className={`px-3 py-1.5 capitalize transition-colors ${modeFilter === m ? 'bg-blue-600 text-white' : 'text-muted hover:text-gray-300 hover:bg-surface-3'}`}
+            >{m}</button>
+          ))}
+        </div>
+        <input
+          type="text"
+          placeholder="Search ports…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="input-sm text-xs flex-1 min-w-[160px] max-w-xs"
+        />
+        <span className="text-xs text-muted ml-auto">{filtered.length} / {ports.length} ports</span>
+      </div>
+
+      {Object.keys(byDevice).length === 0 && (
+        <div className="text-sm text-muted text-center py-8">No ports match the current filter.</div>
+      )}
+
       {Object.entries(byDevice).sort(([a], [b]) => a.localeCompare(b)).map(([device, dPorts]) => (
         <div key={device} className="card overflow-x-auto">
           <div className="px-3 py-2 border-b border-surface-4 text-xs font-semibold text-gray-300">{device}</div>
@@ -518,54 +569,92 @@ function PortsTab({ ports }: { ports: UniFiPort[] }) {
                 <th className="px-3 py-2 text-right font-medium">Max</th>
                 {hasConnector && <th className="px-3 py-2 text-left font-medium">Type</th>}
                 {hasPoe       && <th className="px-3 py-2 text-left font-medium">PoE</th>}
-                <th className="px-3 py-2 text-right font-medium">VLAN</th>
+                <th className="px-3 py-2 text-left font-medium">Mode</th>
+                <th className="px-3 py-2 text-left font-medium">VLAN</th>
                 {hasBytes     && <th className="px-3 py-2 text-right font-medium">TX</th>}
                 {hasBytes     && <th className="px-3 py-2 text-right font-medium">RX</th>}
               </tr>
             </thead>
             <tbody>
-              {[...dPorts].sort((a, b) => a.idx - b.idx).map((p) => (
-                <tr key={`${p.device_id}-${p.idx}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-                  <td className="px-3 py-2 text-right font-mono text-muted">{p.idx}</td>
-                  <td className="px-3 py-2">
-                    <div className="text-gray-300">{p.description || p.name || `Port ${p.idx}`}</div>
-                    {p.description && p.name && p.description !== p.name && (
-                      <div className="text-muted text-[10px]">{p.name}</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {p.state === 'UP'
-                      ? <span className="badge-ok">up</span>
-                      : <span className="badge bg-surface-4 text-muted">down</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-muted">
-                    {p.state === 'UP' && p.speed_mbps > 0 ? fmtSpeed(p.speed_mbps) : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-muted">
-                    {p.max_speed_mbps > 0 ? fmtSpeed(p.max_speed_mbps) : '—'}
-                  </td>
-                  {hasConnector && <td className="px-3 py-2 text-muted">{p.connector || '—'}</td>}
-                  {hasPoe && (
+              {[...dPorts].sort((a, b) => a.idx - b.idx).map((p) => {
+                const trunk = isTrunk(p)
+                return (
+                  <tr key={`${p.device_id}-${p.idx}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+                    <td className="px-3 py-2 text-right font-mono text-muted">{p.idx}</td>
                     <td className="px-3 py-2">
-                      {p.poe_enabled
-                        ? <span className={`text-xs ${p.poe_state === 'UP' ? 'text-yellow-400' : 'text-muted'}`}>
-                            {p.poe_standard || 'PoE'}
-                          </span>
-                        : <span className="text-muted">—</span>}
+                      <div className="text-gray-300">{p.description || p.name || `Port ${p.idx}`}</div>
+                      {p.description && p.name && p.description !== p.name && (
+                        <div className="text-muted text-[10px]">{p.name}</div>
+                      )}
                     </td>
-                  )}
-                  <td className="px-3 py-2 text-right font-mono text-muted">
-                    {p.tagged_vlans?.length > 0 ? (
-                      <span className="flex flex-col items-end gap-0.5">
-                        <span className="text-xs text-blue-400 font-semibold">Trunk</span>
-                        <span className="text-xs">{p.tagged_vlans.join(', ')}</span>
-                      </span>
-                    ) : p.vlan > 0 ? p.vlan : '—'}
-                  </td>
-                  {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.tx_bytes)}</td>}
-                  {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.rx_bytes)}</td>}
-                </tr>
-              ))}
+                    <td className="px-3 py-2">
+                      {p.state === 'UP'
+                        ? <span className="badge-ok">up</span>
+                        : <span className="badge bg-surface-4 text-muted">down</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-muted">
+                      {p.state === 'UP' && p.speed_mbps > 0 ? fmtSpeed(p.speed_mbps) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-muted">
+                      {p.max_speed_mbps > 0 ? fmtSpeed(p.max_speed_mbps) : '—'}
+                    </td>
+                    {hasConnector && <td className="px-3 py-2 text-muted">{p.connector || '—'}</td>}
+                    {hasPoe && (
+                      <td className="px-3 py-2">
+                        {p.poe_enabled
+                          ? <span className={`text-xs ${p.poe_state === 'UP' ? 'text-yellow-400' : 'text-muted'}`}>
+                              {p.poe_standard || 'PoE'}
+                            </span>
+                          : <span className="text-muted">—</span>}
+                      </td>
+                    )}
+                    {/* Mode column */}
+                    <td className="px-3 py-2">
+                      {trunk
+                        ? <span className="text-xs font-semibold text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">Trunk</span>
+                        : <span className="text-xs font-semibold text-gray-400 bg-surface-4 px-1.5 py-0.5 rounded">Access</span>}
+                    </td>
+                    {/* VLAN column */}
+                    <td className="px-3 py-2">
+                      {trunk ? (
+                        <div className="space-y-1">
+                          {p.vlan > 0 && (
+                            <div className="text-muted text-[10px]">
+                              native: <span className="text-gray-400 font-mono">{vlanLabel(p.vlan)}</span>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {p.tagged_vlans.length > 0
+                              ? p.tagged_vlans.map((vid) => (
+                                  <span
+                                    key={vid}
+                                    title={vlanMap.get(vid)}
+                                    className="font-mono text-[10px] bg-blue-500/15 text-blue-300 px-1 py-0.5 rounded"
+                                  >
+                                    {vlanMap.has(vid) ? `${vid} ${vlanMap.get(vid)}` : vid}
+                                  </span>
+                                ))
+                              : (p.tagged_network_names ?? []).map((name) => (
+                                  <span
+                                    key={name}
+                                    className="font-mono text-[10px] bg-blue-500/15 text-blue-300 px-1 py-0.5 rounded"
+                                  >
+                                    {name}
+                                  </span>
+                                ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="font-mono text-muted">
+                          {p.vlan > 0 ? vlanLabel(p.vlan) : '—'}
+                        </span>
+                      )}
+                    </td>
+                    {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.tx_bytes)}</td>}
+                    {hasBytes && <td className="px-3 py-2 text-right font-mono text-muted">{fmtBytes(p.rx_bytes)}</td>}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

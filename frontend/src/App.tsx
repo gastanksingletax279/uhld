@@ -39,6 +39,8 @@ export default function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/plugins" element={<SettingsPage tab="plugins" />} />
           <Route path="settings/backup" element={<SettingsPage tab="backup" />} />
+          <Route path="settings/account" element={<SettingsPage tab="account" />} />
+          <Route path="settings/users" element={<SettingsPage tab="users" />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

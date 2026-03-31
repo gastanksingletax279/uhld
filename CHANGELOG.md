@@ -6,6 +6,59 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.03.31-02] — 2026-03-31
+
+### Added
+
+#### Authentication — TOTP 2FA
+- Users can now enroll a **TOTP authenticator** (Google Authenticator, Authy, etc.) from **Settings → Account**
+- Setup flow: generate secret → scan QR code or copy manual key → confirm with a live code to activate
+- On login, users with TOTP enabled are prompted for their 6-digit code after entering their password (partial JWT prevents access until the second factor is verified)
+- Disable TOTP by confirming with the current code — no accidental removal
+- TOTP secrets are **Fernet-encrypted** in the database — never stored in plaintext
+
+#### Authentication — Passkeys (WebAuthn / FIDO2)
+- Register hardware security keys (YubiKey, etc.) or **platform authenticators** (Touch ID, Face ID, Windows Hello) from **Settings → Account**
+- Name each passkey for easy management; rename or delete individual keys at any time
+- Passkey login button on the login page — full passwordless sign-in flow
+- `rp_id` and `expected_origin` are **automatically derived** from the incoming request's `Origin` header when `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` env vars are not set — zero configuration needed for typical homelab use
+
+#### Authentication — OAuth / OIDC social login
+- Support for **Microsoft Entra ID** (Azure AD), **Google**, and **GitHub** as identity providers
+- Configured entirely via environment variables — no code changes needed to add a provider
+- Optional `OAUTH_AUTO_PROVISION=true` to automatically create local accounts on first OAuth login
+- Existing accounts can be linked to an OAuth provider; callback redirects with a clear error when no account match is found and auto-provisioning is off
+
+#### Multi-user with roles
+- **Role-based access control**: `admin` and `viewer` roles
+  - `admin` — full access including Settings, plugin configuration, user management, and all write operations
+  - `viewer` — read-only dashboard and plugin views
+- New **Settings → Users** tab (admin only): list all users with role badge, 2FA status, and active/disabled state; create/delete users; toggle role; toggle active; admin password reset
+- New **Settings → Account** tab (all users): change password, manage TOTP, manage passkeys
+- `is_active` flag — disabled accounts cannot log in
+- Database migration adds `role`, `is_active`, `totp_secret`, `totp_enabled` columns to existing `users` tables on startup
+
+#### Kubernetes — pod detail modal
+- Click any pod name in the Pods list to open a **detail panel** showing: phase, node, IP, QoS class, all init and app containers (image, state, ready, restart count, resource requests/limits, ports), pod volumes (type, name/path), and the last 10 cluster events for that pod
+
+#### Kubernetes — node actions
+- **Cordon** — mark a node as unschedulable (new pods will not be scheduled there)
+- **Uncordon** — restore a cordoned node to schedulable
+- **Drain** — cordon + evict all non-DaemonSet pods; confirmation dialog explains the impact before proceeding
+- **Delete** — remove the node object from the cluster; separate confirmation with drain reminder
+- Node list shows a **SchedulingDisabled** badge on cordoned nodes
+
+#### UniFi — trunk port network names
+- Tagged VLANs on switch ports now display the **network name** alongside the VLAN ID (e.g. `IoT — VLAN 30`)
+- The sentinel `"all"` tagged-networkconf ID is filtered out to prevent spurious empty entries
+
+### Fixed
+- **`migrate_db()` early return bug**: `return` statements inside the `plugin_configs` migration block were exiting the entire function, causing the `users` and `assets` table migrations to be silently skipped on databases that had already had the `instance_id` column applied. All three migration sections now run independently.
+- **WebAuthn API compatibility** (`webauthn` 2.x): removed calls to non-existent `parse_registration_credential_json` / `parse_authentication_credential_json`; `bytes_to_base64url` and `base64url_to_bytes` moved to the correct `webauthn.helpers` path
+- **WebAuthn `rp.id` origin mismatch**: hardcoded `localhost` default caused browser rejection when accessing UHLD via any other hostname or IP; now auto-derived from request `Origin` header
+
+---
+
 ## [2026.03.31-01] — 2026-03-31
 
 ### Added

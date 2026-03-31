@@ -34,10 +34,17 @@ async def _create_user_async(username: str, password: str, admin: bool) -> None:
         if result.scalar_one_or_none():
             console.print(f"[red]User '{username}' already exists.[/red]")
             raise typer.Exit(1)
-        user = User(username=username, hashed_password=hash_password(password), is_admin=admin)
+        role = "admin" if admin else "viewer"
+        user = User(
+            username=username,
+            hashed_password=hash_password(password),
+            is_admin=admin,
+            role=role,
+            is_active=True,
+        )
         db.add(user)
         await db.commit()
-        console.print(f"[green]Created user '{username}' (admin={admin})[/green]")
+        console.print(f"[green]Created user '{username}' (role={role})[/green]")
 
 
 async def _reset_password_async(username: str, new_password: str) -> None:
@@ -61,10 +68,11 @@ async def _list_users_async() -> None:
     table = Table(title="UHLD Users")
     table.add_column("ID", style="dim")
     table.add_column("Username")
-    table.add_column("Admin")
+    table.add_column("Role")
+    table.add_column("Active")
     table.add_column("Created")
     for u in users:
-        table.add_row(str(u.id), u.username, str(u.is_admin), str(u.created_at))
+        table.add_row(str(u.id), u.username, u.role, str(u.is_active), str(u.created_at))
     console.print(table)
 
 

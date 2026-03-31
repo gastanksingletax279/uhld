@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -15,6 +15,41 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(256), nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Role: "admin" (full access) or "viewer" (read-only)
+    role: Mapped[str] = mapped_column(String(32), default="admin", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # TOTP 2FA — secret is encrypted via Fernet before storage
+    totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class Passkey(Base):
+    """WebAuthn / passkey credential registered by a user."""
+    __tablename__ = "passkeys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    credential_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)   # base64url bytes
+    credential_public_key: Mapped[str] = mapped_column(Text, nullable=False)        # base64url bytes
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="Passkey")
+    aaguid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sign_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    transports: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON array of string
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    last_used: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class OAuthAccount(Base):
+    """OAuth/OIDC identity linked to a local user account."""
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)          # entra | google | github
+    provider_user_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

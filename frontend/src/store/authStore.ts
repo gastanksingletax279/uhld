@@ -5,10 +5,11 @@ interface AuthState {
   user: User | null
   loading: boolean
   initialized: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<{ requires_totp?: boolean; partial_token?: string }>
   logout: () => Promise<void>
   fetchMe: () => Promise<void>
   clearSetupFlag: () => void
+  setUser: (user: User) => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -20,7 +21,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ loading: true })
     try {
       const res = await api.login(username, password)
-      set({ user: res.user, loading: false })
+      if ('requires_totp' in res && res.requires_totp) {
+        set({ loading: false })
+        return { requires_totp: true, partial_token: res.partial_token }
+      }
+      set({ user: (res as { user: User }).user, loading: false })
+      return {}
     } catch (err) {
       set({ loading: false })
       throw err
@@ -44,4 +50,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   clearSetupFlag: () => {
     set((state) => state.user ? { user: { ...state.user, needs_setup: false } } : {})
   },
+
+  setUser: (user: User) => set({ user }),
 }))

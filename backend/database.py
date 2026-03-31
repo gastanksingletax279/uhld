@@ -26,10 +26,10 @@ async def init_db() -> None:
 async def migrate_db() -> None:
     """
     Safe schema migrations for existing databases.
-    Recreates plugin_configs table to add instance_id/instance_label and
-    replace the single-column unique constraint with a composite one.
-    Only runs when the instance_id column is absent.
+    Each section is independent — early completion of one section does not
+    skip subsequent sections.
     """
+    # ── plugin_configs table — add instance_id/instance_label ────────────────
     async with engine.begin() as conn:
         table_result = await conn.execute(text("""
             SELECT name
@@ -45,50 +45,63 @@ async def migrate_db() -> None:
         # plugin_configs_new yet, recover by completing the rename.
         if not has_plugin_configs and has_plugin_configs_new:
             await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
-            return
+        elif has_plugin_configs:
+            result = await conn.execute(text("PRAGMA table_info(plugin_configs)"))
+            cols = {row[1] for row in result.fetchall()}
 
-        # Fresh install: nothing to migrate, init_db() will create tables.
-        if not has_plugin_configs:
-            return
+            if "instance_id" in cols:
+                # Migration already applied. Clean up stale temp table from a prior failed run.
+                if has_plugin_configs_new:
+                    await conn.execute(text("DROP TABLE plugin_configs_new"))
+            else:
+                # Recreate table with correct schema, preserving all data.
+                await conn.execute(text("DROP TABLE IF EXISTS plugin_configs_new"))
+                await conn.execute(text("""
+                    CREATE TABLE plugin_configs_new (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        plugin_id VARCHAR(64) NOT NULL,
+                        instance_id VARCHAR(64) NOT NULL DEFAULT 'default',
+                        instance_label VARCHAR(128),
+                        enabled BOOLEAN NOT NULL DEFAULT 0,
+                        config_json TEXT,
+                        last_health_check DATETIME,
+                        health_status VARCHAR(16),
+                        health_message TEXT,
+                        created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                        UNIQUE (plugin_id, instance_id)
+                    )
+                """))
+                await conn.execute(text("""
+                    INSERT INTO plugin_configs_new
+                        (id, plugin_id, instance_id, instance_label, enabled, config_json,
+                         last_health_check, health_status, health_message, created_at, updated_at)
+                    SELECT id, plugin_id, 'default', NULL, enabled, config_json,
+                           last_health_check, health_status, health_message, created_at, updated_at
+                    FROM plugin_configs
+                """))
+                await conn.execute(text("DROP TABLE plugin_configs"))
+                await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
 
-        result = await conn.execute(text("PRAGMA table_info(plugin_configs)"))
-        cols = {row[1] for row in result.fetchall()}
-
-        # Migration already applied. Clean up stale temp table from a prior failed run.
-        if "instance_id" in cols:
-            if has_plugin_configs_new:
-                await conn.execute(text("DROP TABLE plugin_configs_new"))
-            return
-
-        # Recreate table with correct schema, preserving all data.
-        # Drop stale temp table first so interrupted prior runs don't fail here.
-        await conn.execute(text("DROP TABLE IF EXISTS plugin_configs_new"))
-        await conn.execute(text("""
-            CREATE TABLE plugin_configs_new (
-                id INTEGER NOT NULL PRIMARY KEY,
-                plugin_id VARCHAR(64) NOT NULL,
-                instance_id VARCHAR(64) NOT NULL DEFAULT 'default',
-                instance_label VARCHAR(128),
-                enabled BOOLEAN NOT NULL DEFAULT 0,
-                config_json TEXT,
-                last_health_check DATETIME,
-                health_status VARCHAR(16),
-                health_message TEXT,
-                created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-                UNIQUE (plugin_id, instance_id)
-            )
-        """))
-        await conn.execute(text("""
-            INSERT INTO plugin_configs_new
-                (id, plugin_id, instance_id, instance_label, enabled, config_json,
-                 last_health_check, health_status, health_message, created_at, updated_at)
-            SELECT id, plugin_id, 'default', NULL, enabled, config_json,
-                   last_health_check, health_status, health_message, created_at, updated_at
-            FROM plugin_configs
-        """))
-        await conn.execute(text("DROP TABLE plugin_configs"))
-        await conn.execute(text("ALTER TABLE plugin_configs_new RENAME TO plugin_configs"))
+    # ── users table — add columns added after initial release ────────────────
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(users)"))
+        user_cols = {row[1] for row in result.fetchall()}
+        if user_cols:  # table exists
+            new_user_cols = [
+                ("role",         "VARCHAR(32) NOT NULL DEFAULT 'admin'"),
+                ("is_active",    "BOOLEAN NOT NULL DEFAULT 1"),
+                ("totp_secret",  "TEXT"),
+                ("totp_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+            ]
+            for col, typedef in new_user_cols:
+                if col not in user_cols:
+                    await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {typedef}"))
+            # Backfill role from is_admin for existing rows that got the new column
+            if "role" not in user_cols:
+                await conn.execute(text(
+                    "UPDATE users SET role = CASE WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END"
+                ))
 
     # ── assets table — add columns that were missing from initial schema ──────
     async with engine.begin() as conn:
