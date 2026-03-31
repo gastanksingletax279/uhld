@@ -6,16 +6,37 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
-## [Unreleased] — 2026-03-31
+## [2026.03.31-01] — 2026-03-31
 
 ### Added
+
+#### Notifications plugin (new)
+- New **Notifications** plugin under the Automation category
+- Supports three delivery channels: **Email** (SMTP with STARTTLS/SSL), **Telegram** (bot token + chat ID), and **Webhook** (HMAC-SHA256 signed HTTP POST)
+- Per-channel enable/disable toggles and a minimum notification level filter (`info` / `warning` / `error`)
+- Automatic health-check polling: periodically checks all enabled plugins and fires an alert when a plugin transitions between healthy and degraded states
+- Notification history stored in the database — paginated table with level filter, unread-only toggle, mark-all-read, and clear-history actions
+- **Channel test buttons**: send a live test notification to any configured channel directly from the Channels tab, with inline success/error feedback
+- Integrates with the rest of the app: other plugins call `send_notification()` to route alerts through whichever channels are configured
+
+#### Configuration backup & restore (new)
+- New backup API (`/api/backup/`) for creating, listing, and downloading JSON exports of the full application config (plugin configs, settings, users)
+- Restore from a previously downloaded backup file via the Settings UI
+- Scheduled backup support: configure an interval and the system automatically creates rotating backups
+
+#### Sidebar — drag-and-drop reorder
+- Plugin nav items in the sidebar are now **reorderable**: click the **pencil icon** next to the Dashboard link to enter edit mode, drag items to any position, then click the checkmark to exit
+- Drag handles are hidden when not in edit mode so normal navigation is unaffected
+- Order is persisted in `localStorage` and survives page reloads; new plugins are appended at the bottom automatically
+
+#### Dashboard — multi-instance widget labels
+- When more than one instance of a plugin is enabled, **all** widget cards (including the default instance) now display their instance label below the plugin name, making it immediately clear which card is which (e.g. "Proxmox — Home Lab" vs "Proxmox — Work Cluster")
 
 #### Docker — major overhaul
 - **Overview tab** (new default): Docker host info card (version, OS, kernel, arch, CPUs, RAM, storage driver), container state tiles (running / paused / stopped / images), and a recent-events table showing the last hour of Docker events
 - **Container detail modal**: click any container name to open a panel showing image, ID, command, created time, live CPU/memory/network stats with progress bars, and a 50-line log preview — with a "Full Logs" shortcut button
 - **Improved logs modal**: keyword filter bar with live match count, error lines highlighted red, warning lines highlighted yellow, **live tail** toggle that streams logs over WebSocket in real-time (auto-scrolls, capped at 2000 lines)
 - New backend endpoints: `GET /info`, `GET /events`, `GET /containers/{id}/stats`, `WS /containers/{id}/logs/stream`
-- New API client types: `DockerInfo`, `DockerEvent`, `DockerStats`
 
 #### Tailscale
 - **ACL tag selector**: opening "Edit ACL Tags" on a device now silently fetches the tailnet policy and parses all `tag:*` entries — a **Policy tags** chip row appears below the input, filtered live as you type, so you can click to add existing tags instead of typing them manually
@@ -27,6 +48,8 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 - **Bulk restart confirmation**: confirm dialog before restarting multiple pods at once
 
 ### Fixed
+- **Plugin enable/configure modal overflow**: the Enable and Configure modals are now capped at 90% of the viewport height with a scrollable body, so plugins with many config fields (e.g. Notifications, Kubernetes) no longer extend beyond the screen boundaries
+- **Assets plugin 500 errors**: the `Asset` SQLAlchemy model was missing all columns except `id` and `name` — the fields had been accidentally placed on `Notification` instead. Moved all asset fields (`asset_type`, `role`, `manufacturer`, `model`, `cpu`, `cpu_cores`, `ram_gb`, `storage`, `gpu`, `os`, `ip_address`, `notes`, `created_at`, `updated_at`) to the correct model. A `migrate_db()` step adds the missing columns to existing databases on startup.
 - **Sidebar multi-instance highlight**: plugin nav links now use exact path matching — clicking "Docker (prod)" no longer keeps "Docker (dev)" highlighted at the same time
 - **Instance content switching**: navigating between two instances of the same plugin (e.g. two Docker or Kubernetes instances) now correctly remounts the view and reloads data for the selected instance
 
