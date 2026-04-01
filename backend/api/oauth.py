@@ -15,6 +15,7 @@ Common settings:
 import os
 import secrets
 import threading
+from typing import Literal
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
@@ -135,6 +136,44 @@ def _consume_state(state: str) -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+
+def _oauth_redirect_for_known_provider(provider: Literal["entra", "google", "github"]):
+    cfg = _provider_config(provider)
+    if not cfg["client_id"]:
+        raise HTTPException(status_code=503, detail=f"{cfg['name']} OAuth is not configured")
+
+    state = _make_state(provider)
+    redirect_uri = f"{OAUTH_BASE_URL}/api/auth/oauth/{provider}/callback"
+    params = {
+        "client_id": cfg["client_id"],
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "scope": cfg["scopes"],
+        "state": state,
+    }
+    authorize_url = _authorize_url_for_provider(provider)
+    parsed = urlparse(authorize_url)
+    expected_host = _OAUTH_AUTHORIZE_HOSTS.get(provider)
+    if parsed.scheme != "https" or parsed.hostname != expected_host:
+        raise HTTPException(status_code=500, detail="Invalid OAuth provider authorize URL")
+
+    return RedirectResponse(url=f"{authorize_url}?{urlencode(params)}")
+
+
+@router.get("/entra")
+async def oauth_redirect_entra():
+    return _oauth_redirect_for_known_provider("entra")
+
+
+@router.get("/google")
+async def oauth_redirect_google():
+    return _oauth_redirect_for_known_provider("google")
+
+
+@router.get("/github")
+async def oauth_redirect_github():
+    return _oauth_redirect_for_known_provider("github")
+
 @router.get("/providers")
 async def list_providers():
     """Return configured OAuth providers for the login page."""
@@ -143,35 +182,14 @@ async def list_providers():
 
 @router.get("/{provider}")
 async def oauth_redirect(provider: str):
-    """Redirect the browser to the OAuth provider's login page."""
-    cfg = _provider_config(provider)
-    if not cfg["client_id"]:
-        raise HTTPException(status_code=503, detail=f"{cfg['name']} OAuth is not configured")
-
-    state = _make_state(provider)
-    redirect_uri = f"{OAUTH_BASE_URL}/api/auth/oauth/{provider}/callback"
-    params = {
-        "client_id":     cfg["client_id"],
-        "response_type": "code",
-        "redirect_uri":  redirect_uri,
-        "scope":         cfg["scopes"],
-        "state":         state,
-    }
+    """Backward-compatible provider dispatcher."""
     if provider == "entra":
-        authorize_url = _authorize_url_for_provider("entra")
-    elif provider == "google":
-        authorize_url = _authorize_url_for_provider("google")
-    elif provider == "github":
-        authorize_url = _authorize_url_for_provider("github")
-    else:
-        raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
-
-    parsed = urlparse(authorize_url)
-    expected_host = _OAUTH_AUTHORIZE_HOSTS.get(provider)
-    if parsed.scheme != "https" or parsed.hostname != expected_host:
-        raise HTTPException(status_code=500, detail="Invalid OAuth provider authorize URL")
-
-    return RedirectResponse(url=f"{authorize_url}?{urlencode(params)}")
+        return _oauth_redirect_for_known_provider("entra")
+    if provider == "google":
+        return _oauth_redirect_for_known_provider("google")
+    if provider == "github":
+        return _oauth_redirect_for_known_provider("github")
+    raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
 
 
 @router.get("/{provider}/callback")
