@@ -340,14 +340,12 @@ export function Sidebar() {
   const [newSectionName, setNewSectionName] = useState('')
   const [draggingItem, setDraggingItem] = useState<{ type: string; key?: string; id?: string } | null>(null)
 
-  // Sync menu structure when plugin list changes
+  // Sync menu structure when plugin list changes (including enable/disable)
   useEffect(() => {
-    if (enabled.length > 0) {
-      const updated = initMenuStructure(enabled)
-      setMenuStructure(updated)
-      saveMenuStructure(updated)
-    }
-  }, [plugins.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    const updated = initMenuStructure(enabled)
+    setMenuStructure(updated)
+    saveMenuStructure(updated)
+  }, [enabled.length, plugins]) // Watch both enabled count and full plugins array for enable/disable changes
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
