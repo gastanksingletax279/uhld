@@ -37,15 +37,14 @@ _BACKUP_FILENAME_RE = re.compile(r"^backup_\d{8}_\d{6}\.json$")
 
 
 def _resolve_backup_path(filename: str) -> Path:
-    """Validate backup filename and return a path constrained to the backup directory."""
+    """Validate filename and resolve it from existing backup files only."""
     if not _BACKUP_FILENAME_RE.fullmatch(filename):
         raise HTTPException(status_code=400, detail="Invalid backup filename format")
 
-    backup_dir = _backup_dir().resolve()
-    path = (backup_dir / filename).resolve()
-    if path.parent != backup_dir:
-        # Defense-in-depth in case future filename constraints are loosened.
-        raise HTTPException(status_code=400, detail="Invalid filename path")
+    backups = {f.name: f.resolve() for f in _backup_dir().glob("backup_*.json")}
+    path = backups.get(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Backup not found")
     return path
 
 
@@ -109,8 +108,6 @@ async def create_backup(
 async def download_backup(filename: str, _: User = Depends(require_admin)):
     """Download a backup file."""
     path = _resolve_backup_path(filename)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backup not found")
     return FileResponse(path=str(path), filename=filename, media_type="application/json")
 
 
@@ -118,8 +115,6 @@ async def download_backup(filename: str, _: User = Depends(require_admin)):
 async def delete_backup(filename: str, _: User = Depends(require_admin)):
     """Delete a backup file."""
     path = _resolve_backup_path(filename)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backup not found")
     path.unlink()
     logger.info("Backup deleted: %s", filename)
     return {"message": "Backup deleted"}

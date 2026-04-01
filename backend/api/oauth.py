@@ -43,6 +43,19 @@ _OAUTH_AUTHORIZE_HOSTS = {
     "github": "github.com",
 }
 
+
+def _authorize_url_for_provider(provider: str) -> str:
+    """Return a strict, allowlisted authorize URL for the given provider."""
+    if provider == "entra":
+        tenant = os.getenv("OAUTH_ENTRA_TENANT_ID", "common")
+        tenant = "".join(c for c in tenant if c.isalnum() or c in "-._") or "common"
+        return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+    if provider == "google":
+        return "https://accounts.google.com/o/oauth2/v2/auth"
+    if provider == "github":
+        return "https://github.com/login/oauth/authorize"
+    raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
+
 # ── Provider definitions ──────────────────────────────────────────────────────
 
 def _provider_config(provider: str) -> dict:
@@ -144,12 +157,13 @@ async def oauth_redirect(provider: str):
         "scope":         cfg["scopes"],
         "state":         state,
     }
-    parsed = urlparse(cfg["authorize_url"])
+    authorize_url = _authorize_url_for_provider(provider)
+    parsed = urlparse(authorize_url)
     expected_host = _OAUTH_AUTHORIZE_HOSTS.get(provider)
     if parsed.scheme != "https" or parsed.hostname != expected_host:
         raise HTTPException(status_code=500, detail="Invalid OAuth provider authorize URL")
 
-    return RedirectResponse(url=f"{cfg['authorize_url']}?{urlencode(params)}")
+    return RedirectResponse(url=f"{authorize_url}?{urlencode(params)}")
 
 
 @router.get("/{provider}/callback")
