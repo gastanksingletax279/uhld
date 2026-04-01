@@ -123,6 +123,13 @@ class NginxProxyManagerPlugin(PluginBase):
         data = await self._request("GET", "/nginx/certificates")
         return data if isinstance(data, list) else []
 
+    async def fetch_access_lists(self) -> list[dict[str, Any]]:
+        try:
+            data = await self._request("GET", "/nginx/access-lists")
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []  # Access lists might not be available in all NPM versions
+
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.nginx_proxy_manager.api import make_router
 

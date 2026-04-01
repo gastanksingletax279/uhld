@@ -6,6 +6,43 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.03.31-05] — 2026-03-31
+
+### Added
+
+#### Network Tools — real-time command streaming
+- Added **Server-Sent Events (SSE)** streaming endpoints for live diagnostics:
+  - `POST /api/plugins/network_tools/{instance}/ping/stream`
+  - `POST /api/plugins/network_tools/{instance}/traceroute/stream`
+- Frontend now consumes streamed output and renders ping/traceroute lines as they arrive instead of waiting for command completion.
+
+#### Nginx Proxy Manager — in-app management workflows
+- Added full **proxy host CRUD** support from UHLD UI:
+  - list/get/create/update/delete hosts
+  - explicit host enable/disable actions
+- Added full **certificate CRUD** support from UHLD UI:
+  - list/get/create/update/delete certificates
+- Added access-list fetch support for host forms where NPM exposes access lists.
+
+#### LLM Assistant — multi-provider compatibility
+- Added provider-aware support for **OpenAI**, **Ollama**, **Anthropic (Claude)**, **OpenWebUI**, and custom-compatible APIs.
+- Added provider-specific model discovery and request formatting:
+  - Ollama: `/api/tags`, `/api/chat`
+  - Anthropic: `/v1/messages` with `x-api-key`
+  - OpenAI/OpenWebUI-compatible: `/v1/models`, `/v1/chat/completions`
+- Added model override and temperature controls in the UI with improved interaction flow.
+
+### Fixed
+
+#### Sidebar — menu order persistence
+- Fixed a regression where customized sidebar order could reset after reload when plugin state refreshed.
+- Sidebar now initializes from stored menu structure and performs non-destructive reconciliation on plugin list changes.
+
+#### Network Tools — speedtest data consistency
+- Normalized speedtest history storage/rendering so bandwidth values display consistently as Mbps/Gbps instead of raw byte-rate values.
+
+---
+
 ## [2026.03.31-04] — 2026-03-31
 
 ### Added

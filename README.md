@@ -44,6 +44,9 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | ✅ Complete |
 | Docker plugin (containers, images, logs, start/stop/restart) | ✅ Complete |
 | Kubernetes plugin (nodes, workloads, networking, storage, logs, shell, YAML editor) | ✅ Complete |
+| Nginx Proxy Manager plugin (proxy host + certificate CRUD) | ✅ Complete |
+| Network Tools plugin (ping/traceroute live stream, speedtest history) | ✅ Complete |
+| LLM Assistant plugin (OpenAI/Ollama/Anthropic/OpenWebUI) | ✅ Complete |
 | Notifications plugin (email, Telegram, webhook) | ✅ Complete |
 | Configuration backup & restore | ✅ Complete |
 | Asset Inventory plugin | ✅ Complete |

@@ -479,9 +479,12 @@ export const api = {
   llmAssistant: (instanceId = 'default') => {
     const p = instanceId === 'default' ? '/api/plugins/llm_assistant' : `/api/plugins/llm_assistant/${instanceId}`
     return {
-      models: () => request<{ models: LlmModel[] }>(`${p}/models`),
-      chat: (messages: Array<{ role: string; content: string }>, model?: string) =>
-        request<{ reply: string }>(`${p}/chat`, { method: 'POST', body: JSON.stringify({ messages, model }) }),
+      listModels: () => request<{ models: LlmModel[] }>(`${p}/models`),
+      chat: (messages: Array<{ role: string; content: string }>, model?: string, temperature?: number) =>
+        request<{ reply: string; raw: Record<string, unknown> }>(`${p}/chat`, { 
+          method: 'POST', 
+          body: JSON.stringify({ messages, model, temperature }) 
+        }),
     }
   },
 
@@ -490,10 +493,18 @@ export const api = {
     const p = instanceId === 'default' ? '/api/plugins/nginx_proxy_manager' : `/api/plugins/nginx_proxy_manager/${instanceId}`
     return {
       listHosts: () => request<{ items: NpmProxyHost[] }>(`${p}/proxy-hosts`),
-      listCertificates: () => request<{ items: NpmCertificate[] }>(`${p}/certificates`),
+      getHost: (id: number) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts/${id}`),
       createHost: (body: Record<string, unknown>) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts`, { method: 'POST', body: JSON.stringify(body) }),
       updateHost: (id: number, body: Record<string, unknown>) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      enableHost: (id: number) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts/${id}/enable`, { method: 'POST' }),
+      disableHost: (id: number) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts/${id}/disable`, { method: 'POST' }),
       deleteHost: (id: number) => request<{ message: string }>(`${p}/proxy-hosts/${id}`, { method: 'DELETE' }),
+      listCertificates: () => request<{ items: NpmCertificate[] }>(`${p}/certificates`),
+      getCertificate: (id: number) => request<{ item: NpmCertificate }>(`${p}/certificates/${id}`),
+      createCertificate: (body: Record<string, unknown>) => request<{ item: NpmCertificate }>(`${p}/certificates`, { method: 'POST', body: JSON.stringify(body) }),
+      updateCertificate: (id: number, body: Record<string, unknown>) => request<{ item: NpmCertificate }>(`${p}/certificates/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      deleteCertificate: (id: number) => request<{ message: string }>(`${p}/certificates/${id}`, { method: 'DELETE' }),
+      listAccessLists: () => request<{ items: NpmAccessList[] }>(`${p}/access-lists`),
     }
   },
 
@@ -713,7 +724,20 @@ export interface NpmProxyHost {
   domain_names?: string[]
   forward_host?: string
   forward_port?: number
-  enabled?: boolean
+  enabled?: number | boolean
+  certificate_id?: number
+  ssl_forced?: number | boolean
+  http2_support?: number | boolean
+  block_exploits?: number | boolean
+  access_list_id?: number | string
+  advanced_config?: string
+  allow_websocket_upgrade?: number | boolean
+  meta?: {
+    letsencrypt_agree?: boolean
+    dns_challenge?: boolean
+  }
+  certificate?: NpmCertificate
+  access_list?: { name?: string }
   [key: string]: unknown
 }
 
@@ -721,7 +745,15 @@ export interface NpmCertificate {
   id: number
   provider?: string
   nice_name?: string
+  domain_names?: string[]
   expires_on?: string
+  [key: string]: unknown
+}
+
+export interface NpmAccessList {
+  id: number
+  name?: string
+  satisfy_any?: number | boolean
   [key: string]: unknown
 }
 

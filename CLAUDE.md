@@ -386,6 +386,9 @@ See `k8s/deployment.yaml` — Deployment + ClusterIP Service + PVC + Secret refs
 | **UniFi** | Network | X-API-Key + session fallback | Clients, devices, ports, networks, WiFi, firewall |
 | **Docker** | Containers | Unix socket or TCP | Containers, images, logs, start/stop/restart |
 | **Kubernetes** | Containers | kubeconfig content/path or in-cluster | Nodes, workloads, networking, storage, logs, shell, YAML editor |
+| **Nginx Proxy Manager** | Network | API token or username/password | Proxy host CRUD, certificate CRUD, enable/disable hosts |
+| **Network Tools** | Hardware | Local command execution | Ping/traceroute live streaming (SSE), speedtest history |
+| **LLM Assistant** | Developer | API key (provider dependent) | OpenAI/Ollama/Anthropic/OpenWebUI chat + model listing |
 
 ### Planned Plugins
 
@@ -517,6 +520,30 @@ Two data sources:
 - **Local sidecar (optional):** Reads `/var/run/tailscale/tailscaled.sock`. Returns `{ available: false }` when socket doesn't exist.
 
 ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). Frontend ACL editor strips `//` comments for client-side validation.
+
+---
+
+## Nginx Proxy Manager Plugin Notes
+
+- Hosts and certificates now support full CRUD from UHLD without opening NPM UI.
+- Host actions include explicit enable/disable routes to match NPM behavior.
+- Access lists are fetched when available and gracefully fallback to empty on older NPM responses.
+
+---
+
+## Network Tools Plugin Notes
+
+- Ping and traceroute support live line-by-line output via SSE endpoints (`/ping/stream`, `/traceroute/stream`).
+- Streaming timeout handling is per-line to avoid killing long traceroute hops prematurely.
+- Speedtest history values are normalized to Mbps before storage for consistent UI rendering.
+
+---
+
+## LLM Assistant Plugin Notes
+
+- Provider-aware API handling supports OpenAI, Ollama, Anthropic, OpenWebUI, and custom-compatible endpoints.
+- Anthropic uses `x-api-key`/`anthropic-version`; OpenAI-compatible providers use Bearer auth.
+- Ollama model listing uses `/api/tags`; OpenAI-compatible providers use `/v1/models`.
 
 ---
 

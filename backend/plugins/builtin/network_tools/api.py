@@ -4,9 +4,10 @@ import asyncio
 import json
 import re
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.auth import get_current_user
@@ -41,6 +42,57 @@ async def _run_command(args: list[str], timeout: int) -> dict:
     out = stdout.decode("utf-8", errors="replace")
     err = stderr.decode("utf-8", errors="replace")
     return {"exit_code": proc.returncode, "stdout": out, "stderr": err}
+
+
+async def _stream_command(args: list[str], timeout: int) -> AsyncGenerator[str, None]:
+    """Stream command output line by line as Server-Sent Events."""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
+    )
+    
+    try:
+        if proc.stdout:
+            # Use a per-line timeout instead of total timeout
+            # This allows long-running commands like traceroute to work
+            # where each hop can take time to respond
+            line_timeout = 30.0  # 30 seconds per line is reasonable for traceroute
+            
+            while True:
+                # Read with timeout on each line
+                try:
+                    line = await asyncio.wait_for(
+                        proc.stdout.readline(),
+                        timeout=line_timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Check if process is still running
+                    if proc.returncode is not None:
+                        break
+                    # No output for line_timeout seconds - assume command is hung
+                    raise
+                
+                if not line:
+                    break
+                
+                # Send as SSE format: data: <content>\n\n
+                decoded = line.decode("utf-8", errors="replace")
+                yield f"data: {json.dumps({'line': decoded.rstrip()})}\n\n"
+        
+        # Wait for process to complete
+        await proc.wait()
+        
+        # Send completion event
+        yield f"data: {json.dumps({'done': True, 'exit_code': proc.returncode})}\n\n"
+        
+    except asyncio.TimeoutError:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        yield f"data: {json.dumps({'error': 'Command timed out'})}\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
 class PingBody(BaseModel):
@@ -93,6 +145,22 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
         result = await _run_command(["ping", "-c", str(body.count), "-W", "2", host], body.timeout_seconds)
         return {"command": "ping", **result}
 
+    @router.post("/ping/stream")
+    async def stream_ping(body: PingBody, _: User = Depends(get_current_user)):
+        host = _validate_host(body.host)
+        if shutil.which("ping") is None:
+            raise HTTPException(status_code=400, detail="ping command not found")
+        
+        return StreamingResponse(
+            _stream_command(["ping", "-c", str(body.count), "-W", "2", host], body.timeout_seconds),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            }
+        )
+
     @router.post("/traceroute")
     async def run_traceroute(body: TracerouteBody, _: User = Depends(get_current_user)):
         host = _validate_host(body.host)
@@ -103,6 +171,22 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
             body.timeout_seconds,
         )
         return {"command": "traceroute", **result}
+
+    @router.post("/traceroute/stream")
+    async def stream_traceroute(body: TracerouteBody, _: User = Depends(get_current_user)):
+        host = _validate_host(body.host)
+        if shutil.which("traceroute") is None:
+            raise HTTPException(status_code=400, detail="traceroute command not found")
+        
+        return StreamingResponse(
+            _stream_command(["traceroute", "-m", str(body.max_hops), host], body.timeout_seconds),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
 
     @router.post("/dns")
     async def run_dns_lookup(body: DnsLookupBody, _: User = Depends(get_current_user)):

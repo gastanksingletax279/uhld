@@ -8,7 +8,7 @@ from backend.plugins.base import PluginBase
 class LLMAssistantPlugin(PluginBase):
     plugin_id = "llm_assistant"
     display_name = "LLM Assistant"
-    description = "Connect OpenAI-compatible, Ollama, or OpenWebUI endpoints for in-app chat assistance"
+    description = "Connect OpenAI-compatible, Ollama, Anthropic Claude, or OpenWebUI endpoints for in-app chat assistance"
     version = "1.0.0"
     icon = "bot"
     category = "automation"
@@ -17,29 +17,53 @@ class LLMAssistantPlugin(PluginBase):
     config_schema = {
         "type": "object",
         "properties": {
+            "provider": {
+                "type": "string",
+                "title": "Provider Type",
+                "enum": ["openai", "ollama", "anthropic", "openwebui", "custom"],
+                "default": "openai",
+                "description": "Select your LLM provider type for proper API compatibility",
+            },
             "base_url": {
                 "type": "string",
                 "title": "Base URL",
-                "description": "Example: http://localhost:11434 or https://api.openai.com",
+                "description": "OpenAI: https://api.openai.com | Ollama: http://localhost:11434 | Anthropic: https://api.anthropic.com | OpenWebUI: http://openwebui:3000",
             },
             "api_key": {
                 "type": "string",
                 "title": "API Key",
                 "format": "password",
                 "sensitive": True,
+                "description": "Leave empty for local Ollama installations. Required for OpenAI, Anthropic, OpenWebUI.",
             },
             "model": {
                 "type": "string",
                 "title": "Default Model",
                 "default": "gpt-4o-mini",
+                "description": "Examples: gpt-4o-mini, claude-3-5-sonnet-20241022, llama3.2, mistral",
             },
             "system_prompt": {
                 "type": "string",
                 "title": "Default System Prompt",
                 "default": "You are a helpful homelab assistant.",
             },
+            "temperature": {
+                "type": "number",
+                "title": "Default Temperature",
+                "default": 0.7,
+                "minimum": 0.0,
+                "maximum": 2.0,
+                "description": "Controls randomness: 0.0 = deterministic, 2.0 = very creative",
+            },
+            "max_tokens": {
+                "type": "integer",
+                "title": "Max Tokens (optional)",
+                "default": 4096,
+                "minimum": 1,
+                "description": "Maximum response length. Leave default for most providers.",
+            },
         },
-        "required": ["base_url", "model"],
+        "required": ["provider", "base_url", "model"],
     }
 
     def __init__(self, config: dict | None = None) -> None:
@@ -57,8 +81,10 @@ class LLMAssistantPlugin(PluginBase):
         return {"status": "ok", "message": "LLM assistant configured"}
 
     async def get_summary(self) -> dict:
+        provider = self.get_config("provider", "openai")
         return {
             "status": "ok",
+            "provider": provider,
             "model": self.get_config("model", ""),
             "base_url": self.get_config("base_url", ""),
             "chat_requests": self._chat_count,

@@ -437,6 +437,9 @@ This means no per-plugin frontend config code is ever needed.
 | **UniFi** | Network | ✅ Complete | UniFi Integration v1 API (httpx) |
 | **Docker** | Containers | ✅ Complete | httpx Unix socket / TCP transport |
 | **Kubernetes** | Containers | ✅ Complete | `kubernetes` (official Python client) |
+| **Nginx Proxy Manager** | Network | ✅ Complete | NPM REST API (httpx) |
+| **Network Tools** | Hardware | ✅ Complete | System tools + SSE streaming |
+| **LLM Assistant** | Developer | ✅ Complete | OpenAI-compatible + provider-specific adapters (httpx) |
 | **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
 
 ### Phase 2

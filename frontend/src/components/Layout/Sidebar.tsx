@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import {
   DndContext,
@@ -334,18 +334,89 @@ export function Sidebar() {
     instanceCount[p.plugin_id] = (instanceCount[p.plugin_id] ?? 0) + 1
   }
 
-  const [menuStructure, setMenuStructure] = useState<MenuStructure>(() => initMenuStructure(enabled))
+  const [menuStructure, setMenuStructure] = useState<MenuStructure>(() => loadMenuStructure())
+  const [isMenuInitialized, setIsMenuInitialized] = useState(false)
   const [editing, setEditing] = useState(false)
   const [creatingSection, setCreatingSection] = useState(false)
   const [newSectionName, setNewSectionName] = useState('')
   const [draggingItem, setDraggingItem] = useState<{ type: string; key?: string; id?: string } | null>(null)
+  
+  // Track the previous plugin keys to detect additions/removals
+  const prevPluginKeysRef = useRef<string>('')
 
-  // Sync menu structure when plugin list changes (including enable/disable)
+  // Create stable key from enabled plugin list to detect actual changes (not just reference changes)
+  const enabledPluginsKey = enabled
+    .map(p => `${p.plugin_id}:${p.instance_id}`)
+    .sort()
+    .join(',')
+
+  // Sync menu structure with plugins: initialize on first load, then only update on add/remove
   useEffect(() => {
-    const updated = initMenuStructure(enabled)
-    setMenuStructure(updated)
-    saveMenuStructure(updated)
-  }, [enabled.length, plugins]) // Watch both enabled count and full plugins array for enable/disable changes
+    // Skip if no plugins loaded yet
+    if (enabled.length === 0) {
+      prevPluginKeysRef.current = ''
+      return
+    }
+    
+    // If this is the first load, only add new plugins without reordering existing ones
+    if (!isMenuInitialized) {
+      setMenuStructure(prev => {
+        const keyOf = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
+        const allKeys = enabled.map(keyOf)
+        
+        // Clean up sections: remove plugins that no longer exist
+        const cleanedSections = prev.sections.map(section => ({
+          ...section,
+          items: section.items.filter(key => allKeys.includes(key))
+        }))
+        
+        // Find which keys are already placed
+        const placedKeys = new Set<string>()
+        cleanedSections.forEach(section => section.items.forEach(key => placedKeys.add(key)))
+        prev.unsectioned.forEach(key => {
+          if (allKeys.includes(key)) placedKeys.add(key)
+        })
+        
+        // Find new plugins that aren't in localStorage
+        const newKeys = allKeys.filter(key => !placedKeys.has(key))
+        
+        // Clean unsectioned without reordering
+        const cleanedUnsectioned = prev.unsectioned.filter(key => allKeys.includes(key))
+        
+        // Sort only the new keys by category
+        const pluginMap = Object.fromEntries(enabled.map(p => [keyOf(p), p]))
+        const sortedNewKeys = newKeys.sort((a, b) => {
+          const pa = pluginMap[a]
+          const pb = pluginMap[b]
+          if (!pa || !pb) return 0
+          const ai = CATEGORY_ORDER.indexOf(pa.category || 'other')
+          const bi = CATEGORY_ORDER.indexOf(pb.category || 'other')
+          return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+        })
+        
+        const updated = {
+          sections: cleanedSections,
+          unsectioned: [...cleanedUnsectioned, ...sortedNewKeys]
+        }
+        
+        saveMenuStructure(updated)
+        return updated
+      })
+      
+      setIsMenuInitialized(true)
+      prevPluginKeysRef.current = enabledPluginsKey
+      return
+    }
+    
+    // Only update if plugins actually changed (addition/removal)
+    if (prevPluginKeysRef.current !== enabledPluginsKey) {
+      const updated = initMenuStructure(enabled)
+      setMenuStructure(updated)
+      saveMenuStructure(updated)
+      prevPluginKeysRef.current = enabledPluginsKey
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabledPluginsKey, enabled, isMenuInitialized])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),

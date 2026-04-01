@@ -17,11 +17,22 @@ export function NetworkToolsView({ instanceId = 'default' }: { instanceId?: stri
   const [speedtestHistory, setSpeedtestHistory] = useState<any[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [toolsAvailable, setToolsAvailable] = useState<Record<string, boolean>>({})
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [activeEventSource, setActiveEventSource] = useState<EventSource | null>(null)
 
   useEffect(() => {
     loadTools()
     loadSpeedtestHistory()
   }, [])
+
+  // Cleanup EventSource on unmount
+  useEffect(() => {
+    return () => {
+      if (activeEventSource) {
+        activeEventSource.close()
+      }
+    }
+  }, [activeEventSource])
 
   async function loadTools() {
     try {
@@ -45,18 +56,110 @@ export function NetworkToolsView({ instanceId = 'default' }: { instanceId?: stri
     }
   }
 
+  function runStreaming(tool: 'ping' | 'traceroute') {
+    // Close previous stream if any
+    if (activeEventSource) {
+      activeEventSource.close()
+    }
+
+    setLoading(true)
+    setIsStreaming(true)
+    setOutput('')
+
+    const baseUrl = `/api/plugins/network_tools${instanceId !== 'default' ? `/${instanceId}` : ''}`
+    const params = new URLSearchParams()
+    
+    if (tool === 'ping') {
+      params.set('host', query)
+      params.set('count', '4')
+      params.set('timeout_seconds', '60')
+    } else if (tool === 'traceroute') {
+      params.set('host', query)
+      params.set('max_hops', '20')
+      params.set('timeout_seconds', '120')
+    }
+
+    // Note: EventSource only supports GET, so we need to use fetch with POST and handle SSE manually
+    const url = `${baseUrl}/${tool}/stream`
+    
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(
+        tool === 'ping' 
+          ? { host: query, count: 4, timeout_seconds: 60 }
+          : { host: query, max_hops: 20, timeout_seconds: 120 }
+      ),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+
+        const reader = response.body?.getReader()
+        const decoder = new TextDecoder()
+
+        if (!reader) {
+          throw new Error('No response body')
+        }
+
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const jsonStr = line.slice(6)
+              try {
+                const data = JSON.parse(jsonStr)
+                if (data.line) {
+                  setOutput((prev) => prev + data.line + '\n')
+                } else if (data.done) {
+                  setLoading(false)
+                  setIsStreaming(false)
+                  if (data.exit_code !== 0) {
+                    setOutput((prev) => prev + `\n❌ Command exited with code ${data.exit_code}`)
+                  }
+                } else if (data.error) {
+                  setOutput((prev) => prev + `\n❌ Error: ${data.error}`)
+                  setLoading(false)
+                  setIsStreaming(false)
+                }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e)
+              }
+            }
+          }
+        }
+      })
+      .catch((e) => {
+        const errMsg = e instanceof Error ? e.message : 'Stream failed'
+        setOutput((prev) => (prev || '') + `\n❌ Error: ${errMsg}`)
+        setLoading(false)
+        setIsStreaming(false)
+      })
+  }
+
   async function run(tool: Tool) {
+    // Use streaming for ping and traceroute
+    if (tool === 'ping' || tool === 'traceroute') {
+      runStreaming(tool)
+      return
+    }
+
     setLoading(true)
     setOutput('')
     try {
       let data: any
       switch (tool) {
-        case 'ping':
-          data = await networkApi.ping(query, 4)
-          break
-        case 'traceroute':
-          data = await networkApi.traceroute(query, 20)
-          break
         case 'dns':
           data = await networkApi.dns(query, recordType)
           break
@@ -223,7 +326,7 @@ RUN apt-get update && apt-get install -y \\
       {loading && (
         <div className="flex items-center gap-2 text-sm text-muted">
           <div className="animate-spin">⏳</div>
-          Running command...
+          {isStreaming ? 'Streaming output...' : 'Running command...'}
         </div>
       )}
 
