@@ -445,6 +445,116 @@ export const api = {
     }
   },
 
+  // Network Tools — instance-aware factory
+  networkTools: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/network_tools' : `/api/plugins/network_tools/${instanceId}`
+    return {
+      tools: () => request<{ tools: Array<{ id: string; available: boolean }> }>(`${p}/tools`),
+      ping: (host: string, count = 4) =>
+        request<CommandResult>(`${p}/ping`, { method: 'POST', body: JSON.stringify({ host, count }) }),
+      traceroute: (host: string, max_hops = 20) =>
+        request<CommandResult>(`${p}/traceroute`, { method: 'POST', body: JSON.stringify({ host, max_hops }) }),
+      dns: (query: string, record_type = 'A') =>
+        request<CommandResult>(`${p}/dns`, { method: 'POST', body: JSON.stringify({ query, record_type }) }),
+      whois: (query: string) =>
+        request<CommandResult>(`${p}/whois`, { method: 'POST', body: JSON.stringify({ query }) }),
+      speedtest: () =>
+        request<{ command: string; result: Record<string, unknown>; stdout: string; stderr: string; exit_code: number }>(`${p}/speedtest`, { method: 'POST', body: JSON.stringify({}) }),
+      speedtestHistory: () => request<{ items: Record<string, unknown>[] }>(`${p}/speedtest/history`),
+    }
+  },
+
+  // Remote tcpdump — instance-aware factory
+  remoteTcpdump: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/remote_tcpdump' : `/api/plugins/remote_tcpdump/${instanceId}`
+    return {
+      run: (body: { interface: string; packet_count?: number; filter?: string; timeout_seconds?: number; remote?: boolean }) =>
+        request<CommandResult>(`${p}/capture/run`, { method: 'POST', body: JSON.stringify(body) }),
+      list: () => request<{ items: TcpdumpCaptureItem[] }>(`${p}/captures`),
+      get: (id: string) => request<TcpdumpCaptureItem>(`${p}/captures/${id}`),
+    }
+  },
+
+  // LLM Assistant — instance-aware factory
+  llmAssistant: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/llm_assistant' : `/api/plugins/llm_assistant/${instanceId}`
+    return {
+      models: () => request<{ models: LlmModel[] }>(`${p}/models`),
+      chat: (messages: Array<{ role: string; content: string }>, model?: string) =>
+        request<{ reply: string }>(`${p}/chat`, { method: 'POST', body: JSON.stringify({ messages, model }) }),
+    }
+  },
+
+  // Nginx Proxy Manager — instance-aware factory
+  nginxProxyManager: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/nginx_proxy_manager' : `/api/plugins/nginx_proxy_manager/${instanceId}`
+    return {
+      listHosts: () => request<{ items: NpmProxyHost[] }>(`${p}/proxy-hosts`),
+      listCertificates: () => request<{ items: NpmCertificate[] }>(`${p}/certificates`),
+      createHost: (body: Record<string, unknown>) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts`, { method: 'POST', body: JSON.stringify(body) }),
+      updateHost: (id: number, body: Record<string, unknown>) => request<{ item: NpmProxyHost }>(`${p}/proxy-hosts/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      deleteHost: (id: number) => request<{ message: string }>(`${p}/proxy-hosts/${id}`, { method: 'DELETE' }),
+    }
+  },
+
+  // Tasks/Incidents — instance-aware factory (upgraded to full incident management)
+  tasksIncidents: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/tasks_incidents' : `/api/plugins/tasks_incidents/${instanceId}`
+    return {
+      list: (kind?: string, status?: string) => {
+        const qs = new URLSearchParams()
+        if (kind) qs.append('kind', kind)
+        if (status) qs.append('status', status)
+        return request<{ items: TaskIncidentItem[] }>(`${p}/items${qs.toString() ? `?${qs.toString()}` : ''}`)
+      },
+      get: (id: number) =>
+        request<{ item: TaskIncidentItem }>(`${p}/items/${id}`),
+      create: (body: {
+        title: string
+        kind?: string
+        severity?: string
+        status?: string
+        priority?: string
+        description?: string
+        affected_systems?: string[]
+        impact?: string
+        assignees?: string[]
+        due_date?: string
+      }) =>
+        request<{ item: TaskIncidentItem }>(`${p}/items`, { method: 'POST', body: JSON.stringify(body) }),
+      update: (id: number, body: Partial<TaskIncidentItem>) =>
+        request<{ item: TaskIncidentItem }>(`${p}/items/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      addComment: (id: number, text: string, kind?: string) =>
+        request<{ comment: IncidentComment }>(`${p}/items/${id}/comments`, {
+          method: 'POST',
+          body: JSON.stringify({ text, kind: kind || 'comment' }),
+        }),
+      remove: (id: number) => request<{ message: string }>(`${p}/items/${id}`, { method: 'DELETE' }),
+      summary: () =>
+        request<{
+          total: number
+          by_kind: Record<string, number>
+          by_status: Record<string, number>
+          critical_open: number
+          open_count: number
+        }>(`${p}/summary`),
+    }
+  },
+
+  // Patch Panel — instance-aware factory
+  patchPanel: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/patch_panel' : `/api/plugins/patch_panel/${instanceId}`
+    return {
+      list: () => request<{ items: PatchPanelLink[] }>(`${p}/links`),
+      create: (body: Omit<PatchPanelLink, 'id' | 'created_at' | 'updated_at'>) =>
+        request<{ item: PatchPanelLink }>(`${p}/links`, { method: 'POST', body: JSON.stringify(body) }),
+      update: (id: number, body: Partial<PatchPanelLink>) =>
+        request<{ item: PatchPanelLink }>(`${p}/links/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      remove: (id: number) => request<{ message: string }>(`${p}/links/${id}`, { method: 'DELETE' }),
+      summary: () => request<{ total_links: number; panels: number; devices: number }>(`${p}/summary`),
+    }
+  },
+
   // Settings
   getSettings: () => request<SettingItem[]>('/api/settings/'),
 
@@ -569,6 +679,89 @@ export interface PluginSummary {
   instance_id: string
   status: string
   [key: string]: unknown
+}
+
+export interface CommandResult {
+  command?: string
+  exit_code: number
+  stdout: string
+  stderr: string
+}
+
+export interface TcpdumpCaptureItem {
+  id: string
+  created_at: string
+  mode?: string
+  interface?: string
+  packet_count?: number
+  filter?: string
+  command?: string
+  exit_code?: number
+  stdout?: string
+  stderr?: string
+  stdout_preview?: string
+  stderr_preview?: string
+}
+
+export interface LlmModel {
+  id: string
+  [key: string]: unknown
+}
+
+export interface NpmProxyHost {
+  id: number
+  domain_names?: string[]
+  forward_host?: string
+  forward_port?: number
+  enabled?: boolean
+  [key: string]: unknown
+}
+
+export interface NpmCertificate {
+  id: number
+  provider?: string
+  nice_name?: string
+  expires_on?: string
+  [key: string]: unknown
+}
+
+export interface IncidentComment {
+  id: number
+  author: string
+  kind: 'comment' | 'status_change' | 'assignment' | 'creation' | 'note'
+  text: string
+  timestamp: string
+}
+
+export interface TaskIncidentItem {
+  id: number
+  number?: string
+  title: string
+  kind: 'task' | 'incident' | 'request'
+  severity?: 'critical' | 'high' | 'medium' | 'low'
+  status: 'new' | 'assigned' | 'investigating' | 'resolved' | 'closed' | 'open'
+  priority: 'low' | 'medium' | 'high'
+  description?: string
+  affected_systems?: string[]
+  impact?: string
+  assignees?: string[]
+  assignee?: string | null
+  due_date?: string | null
+  notes?: string | null
+  comments?: IncidentComment[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface PatchPanelLink {
+  id: number
+  panel: string
+  panel_port: string
+  device: string
+  device_port: string
+  notes?: string | null
+  created_at?: string
+  updated_at?: string
 }
 
 export interface SettingItem {

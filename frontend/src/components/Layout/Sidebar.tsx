@@ -7,6 +7,10 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverEvent,
+  DragStartEvent,
+  DragOverlay,
+  pointerWithin,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -16,40 +20,81 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { usePluginStore } from '../../store/pluginStore'
-import { Server, LayoutDashboard, Settings, Puzzle, GripVertical, Pencil, Check } from 'lucide-react'
+import { Server, LayoutDashboard, Settings, Puzzle, GripVertical, Pencil, Check, ChevronDown, ChevronRight, Plus, Trash2, ArrowUpDown, FolderOpen, Folder } from 'lucide-react'
 import { PluginIcon } from '../PluginIcon'
 import type { PluginListItem } from '../../api/client'
 
-// ── Persist sidebar order in localStorage ─────────────────────────────────────
+// ── Persist sidebar menu structure in localStorage ────────────────────────────
 
-const SIDEBAR_ORDER_KEY = 'sidebar_order'
+const MENU_STRUCTURE_KEY = 'menu_structure'
+
+interface MenuSection {
+  id: string
+  label: string
+  expanded: boolean
+  items: string[] // plugin keys (plugin_id:instance_id)
+}
+
+interface MenuStructure {
+  sections: MenuSection[]
+  unsectioned: string[] // plugin keys not in any section
+}
 
 const CATEGORY_ORDER = [
   'virtualization', 'containers', 'monitoring', 'network', 'storage', 'infrastructure', 'media', 'arr', 'security', 'automation', 'other',
 ]
 
-function loadSidebarOrder(): string[] {
-  try { return JSON.parse(localStorage.getItem(SIDEBAR_ORDER_KEY) ?? '[]') } catch { return [] }
-}
-
-function saveSidebarOrder(ids: string[]) {
-  localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(ids))
-}
-
-function applySidebarOrder(plugins: PluginListItem[], order: string[]): PluginListItem[] {
-  const key = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
-  if (order.length === 0) {
-    // Default: sort by category order
-    return [...plugins].sort((a, b) => {
-      const ai = CATEGORY_ORDER.indexOf(a.category || 'other')
-      const bi = CATEGORY_ORDER.indexOf(b.category || 'other')
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
-    })
+function loadMenuStructure(): MenuStructure {
+  try {
+    return JSON.parse(localStorage.getItem(MENU_STRUCTURE_KEY) ?? 'null') ?? { sections: [], unsectioned: [] }
+  } catch {
+    return { sections: [], unsectioned: [] }
   }
-  const map = Object.fromEntries(plugins.map((p) => [key(p), p]))
-  const ordered = order.filter((id) => map[id]).map((id) => map[id])
-  const extra = plugins.filter((p) => !order.includes(key(p)))
-  return [...ordered, ...extra]
+}
+
+function saveMenuStructure(structure: MenuStructure) {
+  localStorage.setItem(MENU_STRUCTURE_KEY, JSON.stringify(structure))
+}
+
+function initMenuStructure(plugins: PluginListItem[]): MenuStructure {
+  const keyOf = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
+  const existingStructure = loadMenuStructure()
+  
+  // Collect all plugin keys
+  const allKeys = plugins.map(keyOf)
+  
+  // Clean up sections: remove invalid items
+  const cleanedSections = existingStructure.sections.map(section => ({
+    ...section,
+    items: section.items.filter(key => allKeys.includes(key))
+  }))
+  
+  // Find which keys are already placed
+  const placedKeys = new Set<string>()
+  cleanedSections.forEach(section => section.items.forEach(key => placedKeys.add(key)))
+  existingStructure.unsectioned.forEach(key => {
+    if (allKeys.includes(key)) placedKeys.add(key)
+  })
+  
+  // Add new plugins to unsectioned
+  const newKeys = allKeys.filter(key => !placedKeys.has(key))
+  const cleanedUnsectioned = existingStructure.unsectioned.filter(key => allKeys.includes(key))
+  
+  // Sort new keys by category order (default behavior for new plugins)
+  const pluginMap = Object.fromEntries(plugins.map(p => [keyOf(p), p]))
+  const sortedNewKeys = newKeys.sort((a, b) => {
+    const pa = pluginMap[a]
+    const pb = pluginMap[b]
+    if (!pa || !pb) return 0
+    const ai = CATEGORY_ORDER.indexOf(pa.category || 'other')
+    const bi = CATEGORY_ORDER.indexOf(pb.category || 'other')
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+  })
+  
+  return {
+    sections: cleanedSections,
+    unsectioned: [...cleanedUnsectioned, ...sortedNewKeys]
+  }
 }
 
 // ── Sortable plugin nav item ───────────────────────────────────────────────────
@@ -58,10 +103,12 @@ function SortableNavItem({
   plugin,
   instanceCount,
   editing,
+  isDraggingAny,
 }: {
   plugin: PluginListItem
   instanceCount: number
   editing: boolean
+  isDraggingAny: boolean
 }) {
   const instanceKey = `${plugin.plugin_id}:${plugin.instance_id}`
   const viewPath =
@@ -70,7 +117,8 @@ function SortableNavItem({
       : `/plugins/${plugin.plugin_id}/${plugin.instance_id}`
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: instanceKey,
+    id: `item-${instanceKey}`,
+    data: { type: 'item', key: instanceKey, plugin }
   })
 
   const style = {
@@ -126,6 +174,150 @@ function SortableNavItem({
   )
 }
 
+// ── Sortable section ───────────────────────────────────────────────────────────
+
+function SortableSection({
+  section,
+  plugins,
+  instanceCount,
+  editing,
+  isDraggingAny,
+  onToggle,
+  onRename,
+  onDelete,
+}: {
+  section: MenuSection
+  plugins: Map<string, PluginListItem>
+  instanceCount: Record<string, number>
+  editing: boolean
+  isDraggingAny: boolean
+  onToggle: () => void
+  onRename: (newLabel: string) => void
+  onDelete: () => void
+}) {
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(section.label)
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: `section-${section.id}`,
+    data: { type: 'section', id: section.id }
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+
+  const sectionPlugins = section.items
+    .map(key => plugins.get(key))
+    .filter((p): p is PluginListItem => p !== undefined)
+
+  const handleRenameSubmit = () => {
+    if (renameValue.trim()) {
+      onRename(renameValue.trim())
+    }
+    setRenaming(false)
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className="mb-1">
+      {/* Section header */}
+      <div className="flex items-center gap-1 px-1 py-1 group">
+        {/* Drag handle */}
+        {editing && (
+          <div
+            {...attributes}
+            {...listeners}
+            className="p-0.5 rounded flex-shrink-0 cursor-grab active:cursor-grabbing text-muted/60 hover:text-muted transition-colors"
+            title="Drag to reorder section"
+          >
+            <GripVertical className="w-3 h-3" />
+          </div>
+        )}
+
+        {/* Expand/collapse button */}
+        <button
+          onClick={onToggle}
+          className="p-0.5 rounded flex-shrink-0 text-muted/60 hover:text-muted hover:bg-surface-3 transition-colors"
+          title={section.expanded ? 'Collapse' : 'Expand'}
+        >
+          {section.expanded ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+        </button>
+
+        {/* Section icon and label */}
+        {renaming ? (
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={handleRenameSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameSubmit()
+              if (e.key === 'Escape') {
+                setRenameValue(section.label)
+                setRenaming(false)
+              }
+            }}
+            className="flex-1 px-2 py-0.5 text-xs bg-surface-3 border border-surface-4 rounded text-white"
+            autoFocus
+          />
+        ) : (
+          <>
+            <span className="flex-shrink-0 text-muted/60">
+              {section.expanded ? <FolderOpen className="w-3.5 h-3.5" /> : <Folder className="w-3.5 h-3.5" />}
+            </span>
+            <button
+              onClick={editing ? () => setRenaming(true) : onToggle}
+              className="flex-1 text-left text-xs font-medium text-muted/80 hover:text-muted truncate"
+              title={editing ? 'Click to rename' : section.label}
+            >
+              {section.label}
+            </button>
+          </>
+        )}
+
+        {/* Delete button (editing mode only) */}
+        {editing && !renaming && (
+          <button
+            onClick={onDelete}
+            className="p-0.5 rounded flex-shrink-0 text-muted/40 hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete section"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+
+        {/* Item count */}
+        {!renaming && (
+          <span className="text-xs text-muted/40 flex-shrink-0">
+            {sectionPlugins.length}
+          </span>
+        )}
+      </div>
+
+      {/* Section items */}
+      {section.expanded && sectionPlugins.length > 0 && (
+        <div className="ml-4 space-y-0.5">
+          {sectionPlugins.map(plugin => (
+            <SortableNavItem
+              key={`${plugin.plugin_id}:${plugin.instance_id}`}
+              plugin={plugin}
+              instanceCount={instanceCount[plugin.plugin_id] ?? 1}
+              editing={editing}
+              isDraggingAny={isDraggingAny}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
@@ -142,20 +334,18 @@ export function Sidebar() {
     instanceCount[p.plugin_id] = (instanceCount[p.plugin_id] ?? 0) + 1
   }
 
-  const [order, setOrder] = useState<string[]>(loadSidebarOrder)
+  const [menuStructure, setMenuStructure] = useState<MenuStructure>(() => initMenuStructure(enabled))
   const [editing, setEditing] = useState(false)
+  const [creatingSection, setCreatingSection] = useState(false)
+  const [newSectionName, setNewSectionName] = useState('')
+  const [draggingItem, setDraggingItem] = useState<{ type: string; key?: string; id?: string } | null>(null)
 
-  // Keep order in sync when the plugin list changes (new plugins appended at bottom)
+  // Sync menu structure when plugin list changes
   useEffect(() => {
     if (enabled.length > 0) {
-      const current = loadSidebarOrder()
-      const keyOf = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
-      const merged = [
-        ...current.filter((id) => enabled.some((p) => keyOf(p) === id)),
-        ...enabled.filter((p) => !current.includes(keyOf(p))).map(keyOf),
-      ]
-      setOrder(merged)
-      saveSidebarOrder(merged)
+      const updated = initMenuStructure(enabled)
+      setMenuStructure(updated)
+      saveMenuStructure(updated)
     }
   }, [plugins.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -163,20 +353,211 @@ export function Sidebar() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   )
 
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event
-    if (over && active.id !== over.id) {
-      setOrder((prev) => {
-        const oldIdx = prev.indexOf(String(active.id))
-        const newIdx = prev.indexOf(String(over.id))
-        const next = arrayMove(prev, oldIdx, newIdx)
-        saveSidebarOrder(next)
-        return next
-      })
-    }
+  // Build plugin map for lookups
+  const pluginMap = new Map<string, PluginListItem>()
+  for (const p of enabled) {
+    pluginMap.set(`${p.plugin_id}:${p.instance_id}`, p)
   }
 
-  const sorted = applySidebarOrder(enabled, order)
+  const unsectionedPlugins = menuStructure.unsectioned
+    .map(key => pluginMap.get(key))
+    .filter((p): p is PluginListItem => p !== undefined)
+
+  function handleDragStart(event: DragStartEvent) {
+    const { active } = event
+    const data = active.data.current as { type: string; key?: string; id?: string } | undefined
+    setDraggingItem(data || null)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setDraggingItem(null)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const activeData = active.data.current as { type: string; key?: string; id?: string }
+    const overData = over.data.current as { type: string; key?: string; id?: string; sectionId?: string }
+
+    if (!activeData) return
+
+    setMenuStructure(prev => {
+      const next = { ...prev, sections: [...prev.sections], unsectioned: [...prev.unsectioned] }
+
+      // Handle section reordering
+      if (activeData.type === 'section' && overData?.type === 'section') {
+        const oldIdx = next.sections.findIndex(s => s.id === activeData.id)
+        const newIdx = next.sections.findIndex(s => s.id === overData.id)
+        if (oldIdx !== -1 && newIdx !== -1) {
+          next.sections = arrayMove(next.sections, oldIdx, newIdx)
+        }
+      }
+
+      // Handle item drag
+      if (activeData.type === 'item' && activeData.key) {
+        const itemKey = activeData.key
+
+        // Remove from current location
+        const oldSectionIdx = next.sections.findIndex(s => s.items.includes(itemKey))
+        if (oldSectionIdx !== -1) {
+          next.sections[oldSectionIdx] = {
+            ...next.sections[oldSectionIdx],
+            items: next.sections[oldSectionIdx].items.filter(k => k !== itemKey)
+          }
+        } else {
+          next.unsectioned = next.unsectioned.filter(k => k !== itemKey)
+        }
+
+        // Add to new location
+        if (overData?.type === 'section' && overData.id) {
+          // Dropped on section header - add to end of section
+          const sectionIdx = next.sections.findIndex(s => s.id === overData.id)
+          if (sectionIdx !== -1) {
+            next.sections[sectionIdx] = {
+              ...next.sections[sectionIdx],
+              items: [...next.sections[sectionIdx].items, itemKey],
+              expanded: true // Auto-expand when item added
+            }
+          }
+        } else if (overData?.type === 'item' && overData.key) {
+          // Dropped on another item - insert before/after
+          const targetSectionIdx = next.sections.findIndex(s => s.items.includes(overData.key!))
+          if (targetSectionIdx !== -1) {
+            const items = [...next.sections[targetSectionIdx].items]
+            const targetIdx = items.indexOf(overData.key!)
+            items.splice(targetIdx, 0, itemKey)
+            next.sections[targetSectionIdx] = {
+              ...next.sections[targetSectionIdx],
+              items
+            }
+          } else {
+            // Both in unsectioned - reorder
+            const targetIdx = next.unsectioned.indexOf(overData.key!)
+            if (targetIdx !== -1) {
+              next.unsectioned.splice(targetIdx, 0, itemKey)
+            } else {
+              next.unsectioned.push(itemKey)
+            }
+          }
+        } else {
+          // Dropped on empty space - add to unsectioned
+          next.unsectioned.push(itemKey)
+        }
+      }
+
+      saveMenuStructure(next)
+      return next
+    })
+  }
+
+  function toggleSection(sectionId: string) {
+    setMenuStructure(prev => {
+      const next = {
+        ...prev,
+        sections: prev.sections.map(s =>
+          s.id === sectionId ? { ...s, expanded: !s.expanded } : s
+        )
+      }
+      saveMenuStructure(next)
+      return next
+    })
+  }
+
+  function renameSection(sectionId: string, newLabel: string) {
+    setMenuStructure(prev => {
+      const next = {
+        ...prev,
+        sections: prev.sections.map(s =>
+          s.id === sectionId ? { ...s, label: newLabel } : s
+        )
+      }
+      saveMenuStructure(next)
+      return next
+    })
+  }
+
+  function deleteSection(sectionId: string) {
+    setMenuStructure(prev => {
+      const section = prev.sections.find(s => s.id === sectionId)
+      if (!section) return prev
+      
+      const next = {
+        sections: prev.sections.filter(s => s.id !== sectionId),
+        unsectioned: [...prev.unsectioned, ...section.items]
+      }
+      saveMenuStructure(next)
+      return next
+    })
+  }
+
+  function createSection() {
+    if (!newSectionName.trim()) return
+    
+    setMenuStructure(prev => {
+      const next = {
+        ...prev,
+        sections: [
+          ...prev.sections,
+          {
+            id: `section-${Date.now()}`,
+            label: newSectionName.trim(),
+            expanded: true,
+            items: []
+          }
+        ]
+      }
+      saveMenuStructure(next)
+      return next
+    })
+    
+    setNewSectionName('')
+    setCreatingSection(false)
+  }
+
+  function sortAlphabetically() {
+    setMenuStructure(prev => {
+      const next = {
+        sections: prev.sections.map(section => ({
+          ...section,
+          items: [...section.items].sort((a, b) => {
+            const pa = pluginMap.get(a)
+            const pb = pluginMap.get(b)
+            if (!pa || !pb) return 0
+            const labelA = instanceCount[pa.plugin_id] > 1 
+              ? `${pa.display_name} — ${pa.instance_label || pa.instance_id}`
+              : pa.display_name
+            const labelB = instanceCount[pb.plugin_id] > 1
+              ? `${pb.display_name} — ${pb.instance_label || pb.instance_id}`
+              : pb.display_name
+            return labelA.localeCompare(labelB)
+          })
+        })),
+        unsectioned: [...prev.unsectioned].sort((a, b) => {
+          const pa = pluginMap.get(a)
+          const pb = pluginMap.get(b)
+          if (!pa || !pb) return 0
+          const labelA = instanceCount[pa.plugin_id] > 1
+            ? `${pa.display_name} — ${pa.instance_label || pa.instance_id}`
+            : pa.display_name
+          const labelB = instanceCount[pb.plugin_id] > 1
+            ? `${pb.display_name} — ${pb.instance_label || pb.instance_id}`
+            : pb.display_name
+          return labelA.localeCompare(labelB)
+        })
+      }
+      
+      // Also sort sections alphabetically
+      next.sections.sort((a, b) => a.label.localeCompare(b.label))
+      
+      saveMenuStructure(next)
+      return next
+    })
+  }
+
+  // Create sortable IDs for all items
+  const allSortableIds = [
+    ...menuStructure.sections.map(s => `section-${s.id}`),
+    ...menuStructure.sections.flatMap(s => s.items.map(k => `item-${k}`)),
+    ...menuStructure.unsectioned.map(k => `item-${k}`)
+  ]
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-1 border-r border-surface-4 flex flex-col">
@@ -193,8 +574,8 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-2 text-sm">
-        {/* Dashboard + reorder toggle */}
-        <div className="flex items-center mx-1">
+        {/* Dashboard + edit toggle */}
+        <div className="flex items-center mx-1 mb-2">
           <NavLink
             to="/"
             end
@@ -209,7 +590,7 @@ export function Sidebar() {
             <span className="flex-shrink-0"><LayoutDashboard className="w-4 h-4" /></span>
             <span className="flex-1 truncate">Dashboard</span>
           </NavLink>
-          {sorted.length > 0 && (
+          {(menuStructure.sections.length > 0 || menuStructure.unsectioned.length > 0) && (
             <button
               onClick={() => setEditing((v) => !v)}
               className={`p-1.5 rounded transition-colors flex-shrink-0 ${
@@ -217,34 +598,136 @@ export function Sidebar() {
                   ? 'text-accent bg-accent-dim/20 hover:bg-accent-dim/30'
                   : 'text-muted/40 hover:text-muted hover:bg-surface-3'
               }`}
-              title={editing ? 'Done reordering' : 'Reorder plugins'}
+              title={editing ? 'Done editing' : 'Edit menu'}
             >
               {editing ? <Check className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
             </button>
           )}
         </div>
 
-        {/* Sortable plugin items */}
-        {sorted.length > 0 && (
+        {/* Edit mode toolbar */}
+        {editing && (
+          <div className="mx-1 mb-2 flex gap-1">
+            <button
+              onClick={sortAlphabetically}
+              className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 bg-surface-3 hover:bg-surface-4 border border-surface-4 rounded text-xs text-muted transition-colors"
+              title="Sort all items alphabetically"
+            >
+              <ArrowUpDown className="w-3 h-3" />
+              <span>Sort A-Z</span>
+            </button>
+            <button
+              onClick={() => setCreatingSection(true)}
+              className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 bg-surface-3 hover:bg-surface-4 border border-surface-4 rounded text-xs text-muted transition-colors"
+              title="Add new section"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Section</span>
+            </button>
+          </div>
+        )}
+
+        {/* Create section form */}
+        {creatingSection && (
+          <div className="mx-1 mb-2 p-2 bg-surface-2 border border-surface-4 rounded">
+            <input
+              type="text"
+              value={newSectionName}
+              onChange={(e) => setNewSectionName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') createSection()
+                if (e.key === 'Escape') {
+                  setCreatingSection(false)
+                  setNewSectionName('')
+                }
+              }}
+              placeholder="Section name..."
+              className="w-full px-2 py-1 text-xs bg-surface-3 border border-surface-4 rounded text-white mb-1"
+              autoFocus
+            />
+            <div className="flex gap-1">
+              <button
+                onClick={createSection}
+                className="flex-1 px-2 py-1 bg-accent-dim hover:bg-accent-dim/80 text-white text-xs rounded transition-colors"
+              >
+                Create
+              </button>
+              <button
+                onClick={() => {
+                  setCreatingSection(false)
+                  setNewSectionName('')
+                }}
+                className="flex-1 px-2 py-1 bg-surface-3 hover:bg-surface-4 text-muted text-xs rounded transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Menu items */}
+        {(menuStructure.sections.length > 0 || menuStructure.unsectioned.length > 0) && (
           <div className="mt-1">
             <DndContext
               sensors={sensors}
-              collisionDetection={closestCenter}
+              collisionDetection={pointerWithin}
+              onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={sorted.map((p) => `${p.plugin_id}:${p.instance_id}`)}
+                items={allSortableIds}
                 strategy={verticalListSortingStrategy}
               >
-                {sorted.map((p) => (
-                  <SortableNavItem
-                    key={`${p.plugin_id}:${p.instance_id}`}
-                    plugin={p}
-                    instanceCount={instanceCount[p.plugin_id]}
+                {/* Sections */}
+                {menuStructure.sections.map(section => (
+                  <SortableSection
+                    key={section.id}
+                    section={section}
+                    plugins={pluginMap}
+                    instanceCount={instanceCount}
                     editing={editing}
+                    isDraggingAny={draggingItem !== null}
+                    onToggle={() => toggleSection(section.id)}
+                    onRename={(newLabel) => renameSection(section.id, newLabel)}
+                    onDelete={() => deleteSection(section.id)}
                   />
                 ))}
+
+                {/* Unsectioned items */}
+                {unsectionedPlugins.length > 0 && (
+                  <div className="space-y-0.5">
+                    {unsectionedPlugins.map(plugin => (
+                      <SortableNavItem
+                        key={`${plugin.plugin_id}:${plugin.instance_id}`}
+                        plugin={plugin}
+                        instanceCount={instanceCount[plugin.plugin_id] ?? 1}
+                        editing={editing}
+                        isDraggingAny={draggingItem !== null}
+                      />
+                    ))}
+                  </div>
+                )}
               </SortableContext>
+
+              {/* Drag overlay */}
+              <DragOverlay>
+                {draggingItem?.type === 'item' && draggingItem.key && pluginMap.get(draggingItem.key) && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-surface-4 rounded shadow-xl text-sm text-white">
+                    <PluginIcon name={pluginMap.get(draggingItem.key)!.icon} className="w-4 h-4" />
+                    <span>
+                      {instanceCount[pluginMap.get(draggingItem.key)!.plugin_id] > 1
+                        ? `${pluginMap.get(draggingItem.key)!.display_name} — ${pluginMap.get(draggingItem.key)!.instance_label || pluginMap.get(draggingItem.key)!.instance_id}`
+                        : pluginMap.get(draggingItem.key)!.display_name}
+                    </span>
+                  </div>
+                )}
+                {draggingItem?.type === 'section' && draggingItem.id && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-surface-4 rounded shadow-xl text-xs font-medium text-muted">
+                    <Folder className="w-3.5 h-3.5" />
+                    <span>{menuStructure.sections.find(s => s.id === draggingItem.id)?.label}</span>
+                  </div>
+                )}
+              </DragOverlay>
             </DndContext>
           </div>
         )}

@@ -6,6 +6,37 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.03.31-04] — 2026-03-31
+
+### Added
+
+#### Sidebar — menu customization with sections
+- **Create sections (folders)** to organize plugins — perfect for grouping by function (e.g., "Home Automation", "Media", "Network")
+- **Drag and drop** to reorder plugins within sections, move plugins between sections, or reorder sections themselves
+- **Collapsible sections** with expand/collapse controls and visual folder icons (open/closed states)
+- **Section management**: rename sections inline by clicking the label when editing, delete sections (items move back to unsectioned)
+- **Sort alphabetically** button in edit mode — sorts all plugins and sections A-Z in one click
+- **Persistent storage** — menu structure stored in localStorage, survives refreshes and restarts
+- **Auto-sync** — new plugins automatically appear in the unsectioned area sorted by category
+- Edit mode toolbar with dedicated "Sort A-Z" and "+ Section" buttons
+
+### Fixed
+
+#### Network Tools — speedtest display formatting
+- **Backend**: Speedtest results now convert bytes/sec to Mbps when storing in history
+  - Download/upload speeds properly calculated: `(bytes_per_second * 8) / 1_000_000`
+  - History items store clean Mbps values instead of raw byte counts
+- **Frontend**: Formatted speedtest display with human-readable units
+  - Immediate results show formatted output with emojis (🚀 ⬇️ ⬆️ 📶) and proper units
+  - Auto-converts to Gbps when speed exceeds 1000 Mbps (e.g., "1.2 Gbps" instead of "1200 Mbps")
+  - History display enhanced with color-coded arrows (green ↓ download, blue ↑ upload)
+  - Full timestamp (date + time) in history entries
+  - Server sponsor information displayed where available
+  - Speedtest history auto-loads on component mount
+- **Example**: Raw `59493124.43` bytes/sec now displays as `475.9 Mbps`
+
+---
+
 ## [2026.03.31-03] — 2026-03-31
 
 ### Added
