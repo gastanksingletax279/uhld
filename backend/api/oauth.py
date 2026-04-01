@@ -157,7 +157,15 @@ async def oauth_redirect(provider: str):
         "scope":         cfg["scopes"],
         "state":         state,
     }
-    authorize_url = _authorize_url_for_provider(provider)
+    if provider == "entra":
+        authorize_url = _authorize_url_for_provider("entra")
+    elif provider == "google":
+        authorize_url = _authorize_url_for_provider("google")
+    elif provider == "github":
+        authorize_url = _authorize_url_for_provider("github")
+    else:
+        raise HTTPException(status_code=404, detail=f"Unknown OAuth provider: {provider}")
+
     parsed = urlparse(authorize_url)
     expected_host = _OAUTH_AUTHORIZE_HOSTS.get(provider)
     if parsed.scheme != "https" or parsed.hostname != expected_host:
