@@ -440,13 +440,14 @@ This means no per-plugin frontend config code is ever needed.
 | **Nginx Proxy Manager** | Network | ✅ Complete | NPM REST API (httpx) |
 | **Network Tools** | Hardware | ✅ Complete | System tools + SSE streaming |
 | **LLM Assistant** | Developer | ✅ Complete | OpenAI-compatible + provider-specific adapters (httpx) |
+| **Cloudflare** | Network/DNS | ✅ Complete | Cloudflare API (zones, DNS, analytics, zone settings) |
+| **Plex** | Media | ✅ Complete | Plex HTTP API (sessions, libraries, media actions) |
 | **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
 
 ### Phase 2
 
 | Plugin | Category | Library/API |
 |---|---|---|
-| **Plex** | Media | `plexapi` |
 | **Jellyfin** | Media | Jellyfin HTTP API (httpx) |
 | **TrueNAS** | Storage | TrueNAS REST API (httpx) |
 | **Synology DSM** | Storage | Synology API (httpx) |
@@ -483,7 +484,7 @@ This means no per-plugin frontend config code is ever needed.
 | **OPNsense / pfSense** | Network | REST API |
 | **Nginx Proxy Manager** | Network | NPM REST API |
 | **Traefik** | Network | Traefik REST API |
-| **Cloudflare** | Network/DNS | Cloudflare API — DNS records, tunnel status |
+| **Cloudflare** | Network/DNS | Cloudflare API — DNS records, analytics, zone settings |
 | **Speedtest Tracker** | Network | REST API — scheduled bandwidth testing |
 | **Prometheus** | Monitoring | PromQL API |
 | **Loki** | Monitoring | Loki API |
@@ -663,7 +664,7 @@ When implementing UHLD, follow these rules:
   - Kubeconfig: paste content (encrypted at rest) or path; in-cluster flag
 
 ### Sprint 5: Media & Storage
-- [ ] Plex plugin (active sessions, library stats)
+- [x] Plex plugin (active sessions, library stats, media actions)
 - [ ] Jellyfin plugin
 - [ ] TrueNAS plugin (pool health, disk status, alerts)
 - [ ] Synology plugin

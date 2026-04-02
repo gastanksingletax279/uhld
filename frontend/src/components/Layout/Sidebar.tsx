@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { usePluginStore } from '../../store/pluginStore'
+import { api } from '../../api/client'
 import { Server, LayoutDashboard, Settings, Puzzle, GripVertical, Pencil, Check, ChevronDown, ChevronRight, Plus, Trash2, ArrowUpDown, FolderOpen, Folder } from 'lucide-react'
 import { PluginIcon } from '../PluginIcon'
 import type { PluginListItem } from '../../api/client'
@@ -54,6 +55,10 @@ function loadMenuStructure(): MenuStructure {
 
 function saveMenuStructure(structure: MenuStructure) {
   localStorage.setItem(MENU_STRUCTURE_KEY, JSON.stringify(structure))
+  // Sync to backend for cross-device persistence
+  api.updateMenuStructure(JSON.stringify(structure)).catch(() => {
+    // Silent fail —localStorage still works if backend is unavailable
+  })
 }
 
 function initMenuStructure(plugins: PluginListItem[]): MenuStructure {
@@ -322,9 +327,31 @@ function SortableSection({
 
 export function Sidebar() {
   const { plugins, fetchPlugins } = usePluginStore()
+  const [version, setVersion] = useState<string | null>(null)
+  const [backendMenuLoaded, setBackendMenuLoaded] = useState(false)
 
   useEffect(() => {
     fetchPlugins()
+    // Fetch version on mount
+    api.version().then(data => setVersion(data.version)).catch(() => {})
+    
+    // Load menu structure from backend on mount
+    api.getMenuStructure().then(data => {
+      if (data.menu_structure) {
+        try {
+          const backendStructure = JSON.parse(data.menu_structure)
+          // Merge backend structure with current (localStorage)
+          setMenuStructure(backendStructure)
+          // Also update localStorage to sync
+          localStorage.setItem(MENU_STRUCTURE_KEY, data.menu_structure)
+        } catch {
+          // Invalid JSON in backend, ignore
+        }
+      }
+      setBackendMenuLoaded(true)
+    }).catch(() => {
+      setBackendMenuLoaded(true)  // Continue even if backend load fails
+    })
   }, [fetchPlugins])
 
   const enabled = plugins.filter((p) => p.enabled)
@@ -806,6 +833,16 @@ export function Sidebar() {
           <SidebarLink to="/settings/plugins" icon={<Puzzle className="w-4 h-4" />} label="Plugins" />
           <SidebarLink to="/settings" icon={<Settings className="w-4 h-4" />} label="Settings" />
         </div>
+
+        {/* Version footer */}
+        {version && (
+          <div className="mt-2 px-3 py-2 text-xs text-muted/60 border-t border-surface-4">
+            <div className="flex items-center justify-between">
+              <span>Version</span>
+              <span className="font-mono">{version}</span>
+            </div>
+          </div>
+        )}
       </nav>
     </aside>
   )

@@ -19,6 +19,7 @@ from backend.api import oauth as oauth_router
 from backend.api import plugins as plugins_router
 from backend.api import settings as settings_router
 from backend.api import users as users_router
+from backend.api import version as version_router
 from backend.auth import hash_password
 from backend.database import AsyncSessionLocal, init_db, migrate_db
 from backend.models import Setting, User
@@ -111,6 +112,7 @@ app.include_router(plugins_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(settings_router.router)
 app.include_router(backup_router.router)
+app.include_router(version_router.router)
 
 
 @app.get("/health")

@@ -17,6 +17,10 @@ class YamlApplyRequest(BaseModel):
     yaml: str
 
 
+class YamlValidateRequest(BaseModel):
+    yaml: str
+
+
 def make_router(plugin: KubernetesPlugin) -> APIRouter:
     router = APIRouter()
 
@@ -436,6 +440,75 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
             return await plugin._apply_resource_yaml(body.yaml)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.post("/yaml/validate")
+    async def validate_resource_yaml(body: YamlValidateRequest):
+        try:
+            return await plugin._validate_resource_yaml(body.yaml)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── MetalLB ──────────────────────────────────────────────────────────────
+
+    @router.get("/metallb/overview")
+    async def metallb_overview():
+        try:
+            return await plugin._fetch_metallb_overview()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/ipaddresspools")
+    async def metallb_ipaddresspools():
+        try:
+            return {"ipaddresspools": await plugin._fetch_metallb_ipaddresspools()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/l2advertisements")
+    async def metallb_l2advertisements():
+        try:
+            return {"l2advertisements": await plugin._fetch_metallb_l2advertisements()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/bgpadvertisements")
+    async def metallb_bgpadvertisements():
+        try:
+            return {"bgpadvertisements": await plugin._fetch_metallb_bgpadvertisements()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/bgppeers")
+    async def metallb_bgppeers():
+        try:
+            return {"bgppeers": await plugin._fetch_metallb_bgppeers()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/bfdprofiles")
+    async def metallb_bfdprofiles():
+        try:
+            return {"bfdprofiles": await plugin._fetch_metallb_bfdprofiles()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/metallb/communities")
+    async def metallb_communities():
+        try:
+            return {"communities": await plugin._fetch_metallb_communities()}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── etcd ─────────────────────────────────────────────────────────────────
+
+    @router.get("/etcd/status")
+    async def etcd_status():
+        try:
+            return await plugin._fetch_etcd_status()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 

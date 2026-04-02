@@ -21,6 +21,8 @@ class User(Base):
     # TOTP 2FA — secret is encrypted via Fernet before storage
     totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # User preferences (JSON)
+    menu_structure: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: { sections, unsectioned }
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

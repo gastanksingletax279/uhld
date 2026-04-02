@@ -29,6 +29,10 @@ import { TasksIncidentsWidget } from './tasks_incidents/Widget'
 import { TasksIncidentsView } from './tasks_incidents/View'
 import { PatchPanelWidget } from './patch_panel/Widget'
 import { PatchPanelView } from './patch_panel/View'
+import { PlexWidget } from './plex/Widget'
+import { PlexView } from './plex/View'
+import { CloudflareWidget } from './cloudflare/Widget'
+import { CloudflareView } from './cloudflare/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -46,6 +50,8 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   nginx_proxy_manager: NginxProxyManagerWidget,
   tasks_incidents: TasksIncidentsWidget,
   patch_panel: PatchPanelWidget,
+  plex: PlexWidget,
+  cloudflare: CloudflareWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -64,4 +70,6 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   nginx_proxy_manager: NginxProxyManagerView,
   tasks_incidents: TasksIncidentsView,
   patch_panel: PatchPanelView,
+  plex: PlexView,
+  cloudflare: CloudflareView,
 }

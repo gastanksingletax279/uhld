@@ -157,3 +157,39 @@ async def admin_reset_password(
     user.hashed_password = hash_password(new_password)
     await db.commit()
     return {"message": "Password reset"}
+
+
+# ── User preferences (menu layout, etc.) ─────────────────────────────────────
+
+
+class MenuStructureRequest(BaseModel):
+    menu_structure: str  # JSON string
+
+
+@router.get("/me/menu-structure")
+async def get_my_menu_structure(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Get the current user's menu structure."""
+    result = await db.execute(select(User).where(User.id == user.id))
+    fresh_user = result.scalar_one_or_none()
+    if fresh_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"menu_structure": fresh_user.menu_structure}
+
+
+@router.put("/me/menu-structure")
+async def update_my_menu_structure(
+    body: MenuStructureRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Update the current user's menu structure."""
+    result = await db.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.menu_structure = body.menu_structure
+    await db.commit()
+    return {"message": "Menu structure updated"}

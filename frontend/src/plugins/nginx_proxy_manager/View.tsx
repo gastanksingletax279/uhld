@@ -20,9 +20,11 @@ interface CertFormData {
   nice_name: string
   domain_names: string[]
   meta: {
-    letsencrypt_email?: string
     dns_challenge?: boolean
     dns_provider?: string
+    dns_provider_credentials?: string
+    propagation_seconds?: number
+    key_type?: string
   }
 }
 
@@ -598,7 +600,6 @@ function CertFormModal({
   const [provider, setProvider] = useState('letsencrypt')
   const [niceName, setNiceName] = useState('')
   const [domains, setDomains] = useState('')
-  const [email, setEmail] = useState('')
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -609,10 +610,7 @@ function CertFormModal({
         provider,
         nice_name: niceName,
         domain_names: domains.split(',').map(d => d.trim()).filter(Boolean),
-        meta: {
-          letsencrypt_email: email,
-          letsencrypt_agree: true,
-        },
+        meta: provider === 'letsencrypt' ? { dns_challenge: false } : {},
       }
       await onSave(data)
     } finally {
@@ -658,20 +656,9 @@ function CertFormModal({
           </div>
 
           {provider === 'letsencrypt' && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Email Address</label>
-              <input
-                type="email"
-                className="input w-full"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@example.com"
-                required
-              />
-              <p className="text-xs text-muted mt-1">
-                Required for Let's Encrypt certificate notifications
-              </p>
-            </div>
+            <p className="text-xs text-muted">
+              The Let's Encrypt email address is configured in your Nginx Proxy Manager settings.
+            </p>
           )}
 
           <div className="flex justify-end gap-3 pt-4">

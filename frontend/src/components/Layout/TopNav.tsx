@@ -3,13 +3,15 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useThemeStore } from '../../store/themeStore'
 import { ChangePasswordModal } from '../ChangePasswordModal'
-import { LogOut, User, KeyRound, Sun, Moon } from 'lucide-react'
+import { LogOut, User, KeyRound, Sun, Moon, Github } from 'lucide-react'
 
 const ROUTE_LABELS: Record<string, string> = {
   '/': 'Dashboard',
   '/settings': 'Settings',
   '/settings/plugins': 'Plugins',
 }
+
+const GITHUB_REPO = 'https://github.com/mzac/uhld'
 
 export function TopNav() {
   const navigate = useNavigate()
@@ -30,6 +32,16 @@ export function TopNav() {
       <h1 className="text-sm font-semibold text-gray-200 capitalize">{pageTitle}</h1>
 
       <div className="flex items-center gap-3">
+        <a
+          href={GITHUB_REPO}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-muted hover:text-gray-100 transition-colors"
+          title="View on GitHub"
+        >
+          <Github className="w-3.5 h-3.5" />
+        </a>
+        
         <button
           onClick={toggleTheme}
           className="flex items-center gap-1.5 text-xs text-muted hover:text-gray-100 transition-colors"

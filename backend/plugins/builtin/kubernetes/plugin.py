@@ -5,12 +5,53 @@ import logging
 import os
 import tempfile
 import threading
+from typing import Any
 
 from fastapi import APIRouter
 
 from backend.plugins.base import PluginBase
 
 logger = logging.getLogger(__name__)
+
+
+METALLB_NAMESPACE = "metallb-system"
+METALLB_RESOURCES: dict[str, dict[str, Any]] = {
+    "ipaddresspool": {
+        "plural": "ipaddresspools",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+    "l2advertisement": {
+        "plural": "l2advertisements",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+    "bgpadvertisement": {
+        "plural": "bgpadvertisements",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+    "bgppeer": {
+        "plural": "bgppeers",
+        "versions": ["v1beta2", "v1beta1"],
+        "namespaced": True,
+    },
+    "bfdprofile": {
+        "plural": "bfdprofiles",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+    "community": {
+        "plural": "communities",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+    "configurationstate": {
+        "plural": "configurationstates",
+        "versions": ["v1beta1"],
+        "namespaced": True,
+    },
+}
 
 
 class KubernetesPlugin(PluginBase):
@@ -55,6 +96,19 @@ class KubernetesPlugin(PluginBase):
                 "description": "Filter pods to this namespace. Leave blank for all namespaces.",
                 "placeholder": "default",
             },
+            # ── Alerts ────────────────────────────────────────────────────────
+            "alert_on_etcd_changes": {
+                "type": "boolean",
+                "title": "Alert on etcd Health Changes",
+                "default": True,
+                "description": "Send notifications when etcd cluster health changes (requires Notifications plugin enabled)",
+            },
+            "alert_on_node_changes": {
+                "type": "boolean",
+                "title": "Alert on Node Health Changes",
+                "default": True,
+                "description": "Send notifications when cluster node health changes (requires Notifications plugin enabled)",
+            },
         },
     }
 
@@ -63,6 +117,11 @@ class KubernetesPlugin(PluginBase):
         self._api_client = None
         self._summary_cache: dict | None = None
         self._tmp_kubeconfig: str | None = None  # path to temp file written from content
+        # Track previous state for alerting
+        self._last_etcd_healthy: int | None = None
+        self._last_etcd_total: int | None = None
+        self._last_nodes_ready: int | None = None
+        self._last_nodes_total: int | None = None
 
     # ── Client ────────────────────────────────────────────────────────────────
 
@@ -128,6 +187,11 @@ class KubernetesPlugin(PluginBase):
             self._api_client = None
         self._summary_cache = None
         self._cleanup_tmp()
+        # Reset alert tracking state
+        self._last_etcd_healthy = None
+        self._last_etcd_total = None
+        self._last_nodes_ready = None
+        self._last_nodes_total = None
 
     # ── PluginBase contract ───────────────────────────────────────────────────
 
@@ -151,7 +215,82 @@ class KubernetesPlugin(PluginBase):
         return await self._fetch_summary()
 
     async def scheduled_poll(self) -> None:
-        self._summary_cache = await self._fetch_summary()
+        summary = await self._fetch_summary()
+        self._summary_cache = summary
+        
+        # Skip alerting if summary fetch failed
+        if summary.get("status") == "error":
+            return
+        
+        # Alert on etcd health changes (if enabled)
+        if self._config.get("alert_on_etcd_changes", True):
+            current_etcd_healthy = summary.get("etcd_healthy_members", 0)
+            current_etcd_total = summary.get("etcd_total_members", 0)
+            etcd_present = summary.get("etcd_present", False)
+            
+            if etcd_present and self._last_etcd_healthy is not None and self._last_etcd_total is not None:
+                # Alert on unhealthy members
+                if current_etcd_healthy < self._last_etcd_healthy:
+                    await self._send_alert(
+                        event_type="kubernetes.etcd.degraded",
+                        title=f"etcd cluster degraded ({current_etcd_healthy}/{current_etcd_total} healthy)",
+                        message=f"etcd cluster health decreased from {self._last_etcd_healthy}/{self._last_etcd_total} to {current_etcd_healthy}/{current_etcd_total} healthy members.",
+                        level="error",
+                    )
+                # Alert on recovery
+                elif current_etcd_healthy > self._last_etcd_healthy and current_etcd_healthy == current_etcd_total:
+                    await self._send_alert(
+                        event_type="kubernetes.etcd.recovered",
+                        title=f"etcd cluster recovered ({current_etcd_healthy}/{current_etcd_total} healthy)",
+                        message=f"All etcd members are now healthy ({current_etcd_healthy}/{current_etcd_total}).",
+                        level="info",
+                    )
+                # Alert when still degraded but count changed
+                elif current_etcd_healthy != self._last_etcd_healthy and current_etcd_healthy < current_etcd_total:
+                    await self._send_alert(
+                        event_type="kubernetes.etcd.changed",
+                        title=f"etcd cluster health changed ({current_etcd_healthy}/{current_etcd_total} healthy)",
+                        message=f"etcd health changed from {self._last_etcd_healthy}/{self._last_etcd_total} to {current_etcd_healthy}/{current_etcd_total} healthy members.",
+                        level="warning",
+                    )
+            
+            if etcd_present:
+                self._last_etcd_healthy = current_etcd_healthy
+                self._last_etcd_total = current_etcd_total
+        
+        # Alert on node health changes (if enabled)
+        if self._config.get("alert_on_node_changes", True):
+            current_nodes_ready = summary.get("nodes_ready", 0)
+            current_nodes_total = summary.get("nodes_total", 0)
+            
+            if self._last_nodes_ready is not None and self._last_nodes_total is not None:
+                # Alert when nodes go NotReady
+                if current_nodes_ready < self._last_nodes_ready:
+                    await self._send_alert(
+                        event_type="kubernetes.node.not_ready",
+                        title=f"Node(s) not ready ({current_nodes_ready}/{current_nodes_total} ready)",
+                        message=f"Cluster node health decreased from {self._last_nodes_ready}/{self._last_nodes_total} to {current_nodes_ready}/{current_nodes_total} ready nodes.",
+                        level="error",
+                    )
+                # Alert on recovery
+                elif current_nodes_ready > self._last_nodes_ready and current_nodes_ready == current_nodes_total:
+                    await self._send_alert(
+                        event_type="kubernetes.node.recovered",
+                        title=f"All nodes ready ({current_nodes_ready}/{current_nodes_total})",
+                        message=f"Cluster nodes fully recovered. All {current_nodes_ready} nodes are now ready.",
+                        level="info",
+                    )
+                # Alert when partial recovery or additional failures
+                elif current_nodes_ready != self._last_nodes_ready and current_nodes_ready < current_nodes_total:
+                    await self._send_alert(
+                        event_type="kubernetes.node.changed",
+                        title=f"Node health changed ({current_nodes_ready}/{current_nodes_total} ready)",
+                        message=f"Ready nodes changed from {self._last_nodes_ready}/{self._last_nodes_total} to {current_nodes_ready}/{current_nodes_total}.",
+                        level="warning",
+                    )
+            
+            self._last_nodes_ready = current_nodes_ready
+            self._last_nodes_total = current_nodes_total
 
     async def _fetch_summary(self) -> dict:
         try:
@@ -172,12 +311,42 @@ class KubernetesPlugin(PluginBase):
                 "pods_running": pods_running,
                 "pods_total": len(pods.items),
             }
+            metallb = await self._fetch_metallb_overview()
+            etcd = await self._fetch_etcd_status()
+            result.update({
+                "metallb_present": bool(metallb.get("present")),
+                "metallb_pools": int(metallb.get("ipaddresspools", 0)),
+                "etcd_present": bool(etcd.get("present")),
+                "etcd_healthy_members": int(etcd.get("healthy_members", 0)),
+                "etcd_total_members": int(etcd.get("total_members", 0)),
+            })
             self._summary_cache = result
             return result
         except Exception as exc:
             logger.error("Kubernetes fetch_summary error: %s", exc)
             self._api_client = None
             return {"status": "error", "message": str(exc)}
+
+    async def _send_alert(
+        self,
+        event_type: str,
+        title: str,
+        message: str,
+        level: str = "info",
+    ) -> None:
+        """Send notification for Kubernetes cluster events."""
+        try:
+            from backend.notifications import send_notification
+            await send_notification(
+                event_type=event_type,
+                title=title,
+                message=message,
+                level=level,
+                plugin_id=self.plugin_id,
+                instance_id=None,  # Instance tracking not currently available in PluginBase
+            )
+        except Exception as exc:
+            logger.warning("Failed to send Kubernetes alert: %s", exc)
 
     # ── Data fetchers ─────────────────────────────────────────────────────────
 
@@ -950,6 +1119,328 @@ class KubernetesPlugin(PluginBase):
             })
         return result
 
+    async def _metallb_available(self) -> bool:
+        crds = await self._fetch_crds()
+        return any(c.get("group") == "metallb.io" for c in crds)
+
+    async def _list_metallb_objects(self, kind: str, namespace: str = METALLB_NAMESPACE) -> tuple[list[dict], str]:
+        info = METALLB_RESOURCES.get(kind.lower())
+        if not info:
+            return [], ""
+
+        co = self._custom_objects()
+        for version in info["versions"]:
+            try:
+                if info["namespaced"]:
+                    raw = await self._run(
+                        co.list_namespaced_custom_object,
+                        "metallb.io",
+                        version,
+                        namespace,
+                        info["plural"],
+                    )
+                else:
+                    raw = await self._run(
+                        co.list_cluster_custom_object,
+                        "metallb.io",
+                        version,
+                        info["plural"],
+                    )
+                return list(raw.get("items", [])), version
+            except Exception:
+                continue
+        return [], ""
+
+    async def _get_metallb_object(self, kind: str, namespace: str, name: str) -> dict:
+        info = METALLB_RESOURCES.get(kind.lower())
+        if not info:
+            raise ValueError(f"Unsupported MetalLB kind: {kind}")
+        ns = namespace or METALLB_NAMESPACE
+        co = self._custom_objects()
+        for version in info["versions"]:
+            try:
+                if info["namespaced"]:
+                    return await self._run(
+                        co.get_namespaced_custom_object,
+                        "metallb.io",
+                        version,
+                        ns,
+                        info["plural"],
+                        name,
+                    )
+                return await self._run(
+                    co.get_cluster_custom_object,
+                    "metallb.io",
+                    version,
+                    info["plural"],
+                    name,
+                )
+            except Exception:
+                continue
+        raise ValueError(f"Unable to fetch MetalLB resource: {kind}/{name}")
+
+    async def _patch_metallb_object(self, body: dict, dry_run: bool = False) -> dict:
+        kind = str(body.get("kind", "")).lower()
+        info = METALLB_RESOURCES.get(kind)
+        if not info:
+            raise ValueError(f"Unsupported kind: {body.get('kind', '')}")
+
+        meta = body.get("metadata") or {}
+        name = meta.get("name", "")
+        if not name:
+            raise ValueError("YAML must have metadata.name")
+        namespace = meta.get("namespace") or METALLB_NAMESPACE
+
+        co = self._custom_objects()
+        kwargs = {"dry_run": "All"} if dry_run else {}
+        for version in info["versions"]:
+            try:
+                if info["namespaced"]:
+                    await self._run(
+                        co.patch_namespaced_custom_object,
+                        "metallb.io",
+                        version,
+                        namespace,
+                        info["plural"],
+                        name,
+                        body,
+                        **kwargs,
+                    )
+                else:
+                    await self._run(
+                        co.patch_cluster_custom_object,
+                        "metallb.io",
+                        version,
+                        info["plural"],
+                        name,
+                        body,
+                        **kwargs,
+                    )
+                return {"ok": True, "kind": body.get("kind", ""), "name": name}
+            except Exception:
+                continue
+
+        raise ValueError(f"Unable to patch MetalLB resource: {body.get('kind', '')}/{name}")
+
+    async def _fetch_metallb_overview(self) -> dict:
+        if not await self._metallb_available():
+            return {"present": False}
+
+        pools, _ = await self._list_metallb_objects("ipaddresspool")
+        l2ads, _ = await self._list_metallb_objects("l2advertisement")
+        bgpads, _ = await self._list_metallb_objects("bgpadvertisement")
+        peers, _ = await self._list_metallb_objects("bgppeer")
+        cfg_states, _ = await self._list_metallb_objects("configurationstate")
+
+        invalid_cfg = 0
+        cfg_errors: list[str] = []
+        for c in cfg_states:
+            status = c.get("status") or {}
+            if status.get("result") not in ("", "Valid", None):
+                invalid_cfg += 1
+                msg = status.get("errorSummary") or "Invalid configuration"
+                cfg_errors.append(str(msg))
+
+        return {
+            "present": True,
+            "namespace": METALLB_NAMESPACE,
+            "ipaddresspools": len(pools),
+            "l2advertisements": len(l2ads),
+            "bgpadvertisements": len(bgpads),
+            "bgppeers": len(peers),
+            "invalid_configurations": invalid_cfg,
+            "config_errors": cfg_errors[:5],
+        }
+
+    async def _fetch_metallb_ipaddresspools(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("ipaddresspool")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            status = item.get("status", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "addresses": spec.get("addresses", []),
+                "auto_assign": bool(spec.get("autoAssign", True)),
+                "avoid_buggy_ips": bool(spec.get("avoidBuggyIPs", False)),
+                "assigned_ipv4": int(status.get("assignedIPv4", 0) or 0),
+                "available_ipv4": int(status.get("availableIPv4", 0) or 0),
+                "assigned_ipv6": int(status.get("assignedIPv6", 0) or 0),
+                "available_ipv6": int(status.get("availableIPv6", 0) or 0),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_metallb_l2advertisements(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("l2advertisement")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "ipaddresspools": spec.get("ipAddressPools", []),
+                "interfaces": spec.get("interfaces", []),
+                "node_selectors": len(spec.get("nodeSelectors", [])),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_metallb_bgpadvertisements(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("bgpadvertisement")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "ipaddresspools": spec.get("ipAddressPools", []),
+                "peers": spec.get("peers", []),
+                "communities": spec.get("communities", []),
+                "local_pref": spec.get("localPref", None),
+                "node_selectors": len(spec.get("nodeSelectors", [])),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_metallb_bgppeers(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("bgppeer")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "peer_address": spec.get("peerAddress", ""),
+                "peer_asn": spec.get("peerASN", 0),
+                "my_asn": spec.get("myASN", 0),
+                "vrf": spec.get("vrf", ""),
+                "bfd_profile": spec.get("bfdProfile", ""),
+                "node_selectors": len(spec.get("nodeSelectors", [])),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_metallb_bfdprofiles(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("bfdprofile")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "receive_interval": spec.get("receiveInterval", None),
+                "transmit_interval": spec.get("transmitInterval", None),
+                "detect_multiplier": spec.get("detectMultiplier", None),
+                "echo_mode": bool(spec.get("echoMode", False)),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_metallb_communities(self) -> list[dict]:
+        items, version = await self._list_metallb_objects("community")
+        result = []
+        for item in items:
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+            aliases = spec.get("communities", [])
+            result.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", METALLB_NAMESPACE),
+                "version": version,
+                "aliases": aliases,
+                "alias_count": len(aliases),
+                "created": meta.get("creationTimestamp", ""),
+            })
+        return result
+
+    async def _fetch_etcd_status(self) -> dict:
+        v1 = self._core_v1()
+        selectors = [
+            "component=etcd",
+            "k8s-app=etcd",
+            "app.kubernetes.io/name=etcd",
+        ]
+        pods: list = []
+        for sel in selectors:
+            try:
+                resp = await self._run(v1.list_namespaced_pod, "kube-system", label_selector=sel)
+                if resp.items:
+                    pods = resp.items
+                    break
+            except Exception:
+                continue
+
+        if not pods:
+            try:
+                all_kube_system = await self._run(v1.list_namespaced_pod, "kube-system")
+                pods = [p for p in all_kube_system.items if (p.metadata.name or "").startswith("etcd-")]
+            except Exception:
+                pods = []
+
+        if not pods:
+            return {
+                "present": False,
+                "reason": "No etcd pods detected. Cluster may use external datastore or embedded SQLite.",
+            }
+
+        members = []
+        healthy = 0
+        total_restarts = 0
+        for p in pods:
+            conds = p.status.conditions or []
+            ready = any(c.type == "Ready" and c.status == "True" for c in conds)
+            if ready and (p.status.phase or "") == "Running":
+                healthy += 1
+            restarts = sum((s.restart_count or 0) for s in (p.status.container_statuses or []))
+            total_restarts += restarts
+
+            advertise_urls = ""
+            for c in (p.spec.containers or []):
+                for arg in (c.args or []):
+                    if str(arg).startswith("--advertise-client-urls="):
+                        advertise_urls = str(arg).split("=", 1)[1]
+                        break
+                if advertise_urls:
+                    break
+
+            members.append({
+                "name": p.metadata.name,
+                "namespace": p.metadata.namespace,
+                "node": p.spec.node_name or "",
+                "phase": p.status.phase or "Unknown",
+                "ready": ready,
+                "restarts": restarts,
+                "pod_ip": p.status.pod_ip or "",
+                "host_ip": p.status.host_ip or "",
+                "advertise_client_urls": advertise_urls,
+                "created": _ts(p.metadata.creation_timestamp),
+            })
+
+        mode = "kubernetes-static-pod"
+        if any("k3s" in (m["node"] or "") for m in members):
+            mode = "k3s-embedded"
+
+        return {
+            "present": True,
+            "mode": mode,
+            "healthy_members": healthy,
+            "total_members": len(members),
+            "total_restarts": total_restarts,
+            "members": sorted(members, key=lambda m: m["name"]),
+        }
+
     # ── Networking extras ─────────────────────────────────────────────────────
 
     def _custom_objects(self):
@@ -1080,6 +1571,12 @@ class KubernetesPlugin(PluginBase):
         net = self._networking_v1()
 
         _kind = kind.lower()
+        if _kind in METALLB_RESOURCES:
+            raw = await self._get_metallb_object(_kind, namespace, name)
+            if "metadata" in raw and "managedFields" in raw["metadata"]:
+                del raw["metadata"]["managedFields"]
+            return yaml.dump(raw, default_flow_style=False, allow_unicode=True)
+
         fetchers: dict[str, any] = {
             "pod":         lambda: v1.read_namespaced_pod(name, namespace),
             "deployment":  lambda: apps.read_namespaced_deployment(name, namespace),
@@ -1115,6 +1612,9 @@ class KubernetesPlugin(PluginBase):
         if not kind or not name:
             raise ValueError("YAML must have kind and metadata.name")
 
+        if kind.lower() in METALLB_RESOURCES:
+            return await self._patch_metallb_object(body, dry_run=False)
+
         from kubernetes import client as k8s_client  # type: ignore[import]
         _kind = kind.lower()
         v1 = self._core_v1()
@@ -1139,6 +1639,48 @@ class KubernetesPlugin(PluginBase):
             raise ValueError(f"Unsupported kind: {kind}")
         await self._run(patchers[_kind])
         return {"ok": True, "kind": kind, "name": name}
+
+    async def _validate_resource_yaml(self, yaml_str: str) -> dict:
+        import yaml  # type: ignore[import]
+        body = yaml.safe_load(yaml_str)
+        if not isinstance(body, dict):
+            raise ValueError("YAML must be a mapping")
+
+        kind = str(body.get("kind", ""))
+        meta = body.get("metadata") or {}
+        name = meta.get("name", "")
+        namespace = meta.get("namespace", "")
+        if not kind or not name:
+            raise ValueError("YAML must have kind and metadata.name")
+
+        if kind.lower() in METALLB_RESOURCES:
+            await self._patch_metallb_object(body, dry_run=True)
+            return {"ok": True, "kind": kind, "name": name, "namespace": namespace}
+
+        v1 = self._core_v1()
+        apps = self._apps_v1()
+        net = self._networking_v1()
+
+        _kind = kind.lower()
+        kwargs = {"dry_run": "All"}
+        patchers: dict[str, Any] = {
+            "pod":         lambda: v1.patch_namespaced_pod(name, namespace, body, **kwargs),
+            "deployment":  lambda: apps.patch_namespaced_deployment(name, namespace, body, **kwargs),
+            "statefulset": lambda: apps.patch_namespaced_stateful_set(name, namespace, body, **kwargs),
+            "daemonset":   lambda: apps.patch_namespaced_daemon_set(name, namespace, body, **kwargs),
+            "service":     lambda: v1.patch_namespaced_service(name, namespace, body, **kwargs),
+            "configmap":   lambda: v1.patch_namespaced_config_map(name, namespace, body, **kwargs),
+            "secret":      lambda: v1.patch_namespaced_secret(name, namespace, body, **kwargs),
+            "ingress":     lambda: net.patch_namespaced_ingress(name, namespace, body, **kwargs),
+            "persistentvolumeclaim": lambda: v1.patch_namespaced_persistent_volume_claim(name, namespace, body, **kwargs),
+            "persistentvolume": lambda: v1.patch_persistent_volume(name, body, **kwargs),
+            "namespace":   lambda: v1.patch_namespace(name, body, **kwargs),
+        }
+        if _kind not in patchers:
+            raise ValueError(f"Unsupported kind: {kind}")
+
+        await self._run(patchers[_kind])
+        return {"ok": True, "kind": kind, "name": name, "namespace": namespace}
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

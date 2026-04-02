@@ -11,6 +11,9 @@ RUN npm run build
 # ── Stage 2: Python runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
+ARG VERSION=dev
+ENV UHLD_VERSION=${VERSION}
+
 WORKDIR /app
 
 # Install dependencies

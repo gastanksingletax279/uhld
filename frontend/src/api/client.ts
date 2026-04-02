@@ -363,6 +363,10 @@ export const api = {
         request<{ ok: boolean; kind: string; name: string }>(`${p}/yaml/apply`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ yaml }),
         }),
+      validateYaml:      (yaml: string) =>
+        request<{ ok: boolean; kind: string; name: string; namespace?: string }>(`${p}/yaml/validate`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ yaml }),
+        }),
       // Overview & events
       overview:          () => request<K8sOverview>(`${p}/overview`),
       events:            (namespace = '', warningOnly = false) =>
@@ -412,6 +416,16 @@ export const api = {
       clusterrolebindings:   ()               => request<{ clusterrolebindings: K8sClusterRoleBinding[] }>(`${p}/clusterrolebindings`),
       // Helm
       helmReleases:          (namespace = '') => request<{ releases: K8sHelmRelease[] }>(`${p}/helm/releases${ns(namespace)}`),
+      // MetalLB
+      metallbOverview:       () => request<K8sMetalLBOverview>(`${p}/metallb/overview`),
+      metallbIPAddressPools: () => request<{ ipaddresspools: K8sMetalLBIPAddressPool[] }>(`${p}/metallb/ipaddresspools`),
+      metallbL2Advertisements: () => request<{ l2advertisements: K8sMetalLBL2Advertisement[] }>(`${p}/metallb/l2advertisements`),
+      metallbBGPAdvertisements: () => request<{ bgpadvertisements: K8sMetalLBBGPAdvertisement[] }>(`${p}/metallb/bgpadvertisements`),
+      metallbBGPPeers:       () => request<{ bgppeers: K8sMetalLBBGPPeer[] }>(`${p}/metallb/bgppeers`),
+      metallbBFDProfiles:    () => request<{ bfdprofiles: K8sMetalLBBFDProfile[] }>(`${p}/metallb/bfdprofiles`),
+      metallbCommunities:    () => request<{ communities: K8sMetalLBCommunity[] }>(`${p}/metallb/communities`),
+      // etcd
+      etcdStatus:            () => request<K8sEtcdStatus>(`${p}/etcd/status`),
     }
   },
 
@@ -508,6 +522,53 @@ export const api = {
     }
   },
 
+  // Cloudflare — instance-aware factory
+  cloudflare: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/cloudflare' : `/api/plugins/cloudflare/${instanceId}`
+    return {
+      zones: () => request<{ zones: CloudflareZone[]; cache_updated_at?: string }>(`${p}/zones`),
+      zone: (zoneId: string) => request<{ zone: CloudflareZoneDetail }>(`${p}/zones/${encodeURIComponent(zoneId)}`),
+      pauseZone: (zoneId: string) => request<{ status: string }>(`${p}/zones/${encodeURIComponent(zoneId)}/pause`, { method: 'POST' }),
+      unpauseZone: (zoneId: string) => request<{ status: string }>(`${p}/zones/${encodeURIComponent(zoneId)}/unpause`, { method: 'POST' }),
+      purgeCache: (zoneId: string) => request<{ status: string }>(`${p}/zones/${encodeURIComponent(zoneId)}/purge-cache`, { method: 'POST' }),
+
+      dnsRecords: (zoneId: string, type?: string, name?: string) => {
+        const q = new URLSearchParams()
+        if (type) q.set('type', type)
+        if (name) q.set('name', name)
+        return request<{ records: CloudflareDnsRecord[] }>(`${p}/zones/${encodeURIComponent(zoneId)}/dns-records${q.toString() ? `?${q.toString()}` : ''}`)
+      },
+      dnsRecord: (zoneId: string, recordId: string) =>
+        request<{ record: CloudflareDnsRecord }>(`${p}/zones/${encodeURIComponent(zoneId)}/dns-records/${encodeURIComponent(recordId)}`),
+      createDnsRecord: (zoneId: string, body: CloudflareDnsRecordInput) =>
+        request<{ record: CloudflareDnsRecord }>(`${p}/zones/${encodeURIComponent(zoneId)}/dns-records`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      updateDnsRecord: (zoneId: string, recordId: string, body: CloudflareDnsRecordInput) =>
+        request<{ record: CloudflareDnsRecord }>(`${p}/zones/${encodeURIComponent(zoneId)}/dns-records/${encodeURIComponent(recordId)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        }),
+      deleteDnsRecord: (zoneId: string, recordId: string) =>
+        request<{ status: string }>(`${p}/zones/${encodeURIComponent(zoneId)}/dns-records/${encodeURIComponent(recordId)}`, {
+          method: 'DELETE',
+        }),
+
+      analytics: (zoneId: string, range: '24h' | '7d' | '30d') =>
+        request<{ analytics: CloudflareAnalytics }>(`${p}/zones/${encodeURIComponent(zoneId)}/analytics?range=${encodeURIComponent(range)}`),
+      settings: (zoneId: string) => request<{ settings: CloudflareZoneSettings }>(`${p}/zones/${encodeURIComponent(zoneId)}/settings`),
+      patchSetting: (zoneId: string, setting: string, body: { value?: unknown; enabled?: boolean }) =>
+        request<{ setting: unknown }>(`${p}/zones/${encodeURIComponent(zoneId)}/settings/${encodeURIComponent(setting)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        }),
+      ssl: (zoneId: string) => request<CloudflareSslPayload>(`${p}/zones/${encodeURIComponent(zoneId)}/ssl`),
+      firewallRules: (zoneId: string) =>
+        request<{ rules: CloudflareFirewallRule[]; upgrade_required?: boolean; message?: string }>(`${p}/zones/${encodeURIComponent(zoneId)}/firewall/rules`),
+    }
+  },
+
   // Tasks/Incidents — instance-aware factory (upgraded to full incident management)
   tasksIncidents: (instanceId = 'default') => {
     const p = instanceId === 'default' ? '/api/plugins/tasks_incidents' : `/api/plugins/tasks_incidents/${instanceId}`
@@ -566,6 +627,59 @@ export const api = {
     }
   },
 
+  // Plex Media Server — instance-aware factory
+  plex: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/plex' : `/api/plugins/plex/${instanceId}`
+    return {
+      // Server & Health
+      getStatus: () => request<Record<string, unknown>>(`${p}/status`),
+      getHealth: () => request<Record<string, unknown>>(`${p}/health`),
+      // Sessions (Active Streams)
+      getSessions: () => request<{ sessions: any[] }>(`${p}/sessions`),
+      terminateSession: (sessionId: string, reason = 'Terminated by UHLD') =>
+        request<{ status: string; message: string }>(`${p}/sessions/${encodeURIComponent(sessionId)}?reason=${encodeURIComponent(reason)}`, { method: 'DELETE' }),
+      pauseSession: (sessionId: string) =>
+        request<{ status: string; message: string }>(`${p}/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }),
+      resumeSession: (sessionId: string) =>
+        request<{ status: string; message: string }>(`${p}/sessions/${encodeURIComponent(sessionId)}/resume`, { method: 'POST' }),
+      stopSession: (sessionId: string) =>
+        request<{ status: string; message: string }>(`${p}/sessions/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' }),
+      seekSession: (sessionId: string, offset: number) =>
+        request<{ status: string; message: string }>(`${p}/sessions/${encodeURIComponent(sessionId)}/seek?offset=${offset}`, { method: 'POST' }),
+      // Libraries
+      getLibraries: () => request<{ libraries: any[] }>(`${p}/libraries`),
+      scanLibrary: (libraryId: string) =>
+        request<{ status: string; message: string }>(`${p}/libraries/${encodeURIComponent(libraryId)}/scan`, { method: 'POST' }),
+      refreshLibrary: (libraryId: string) =>
+        request<{ status: string; message: string }>(`${p}/libraries/${encodeURIComponent(libraryId)}/refresh`, { method: 'POST' }),
+      // Media Items
+      getLibraryItems: (libraryId: string, start = 0, size = 50, sort = 'addedAt:desc') =>
+        request<{ items: any[]; total: number; offset: number; size: number }>(`${p}/libraries/${encodeURIComponent(libraryId)}/items?start=${start}&size=${size}&sort=${encodeURIComponent(sort)}`),
+      getItemDetail: (ratingKey: string) =>
+        request<Record<string, unknown>>(`${p}/items/${encodeURIComponent(ratingKey)}`),
+      refreshItem: (ratingKey: string) =>
+        request<{ status: string; message: string }>(`${p}/items/${encodeURIComponent(ratingKey)}/refresh`, { method: 'POST' }),
+      deleteItem: (ratingKey: string) =>
+        request<{ status: string; message: string }>(`${p}/items/${encodeURIComponent(ratingKey)}`, { method: 'DELETE' }),
+      playItem: (ratingKey: string) =>
+        request<{ status: string; play_url: string; duration: number; title: string; type: string }>(`${p}/items/${encodeURIComponent(ratingKey)}/play`, { method: 'POST' }),
+      // TV Shows (Seasons & Episodes)
+      getShowSeasons: (ratingKey: string) =>
+        request<{ seasons: any[] }>(`${p}/shows/${encodeURIComponent(ratingKey)}/seasons`),
+      getSeasonEpisodes: (ratingKey: string) =>
+        request<{ episodes: any[] }>(`${p}/seasons/${encodeURIComponent(ratingKey)}/episodes`),
+      // Dashboard
+      getRecentlyAdded: (limit = 20) =>
+        request<{ items: any[] }>(`${p}/recently-added?limit=${limit}`),
+      getOnDeck: (limit = 20) =>
+        request<{ items: any[] }>(`${p}/on-deck?limit=${limit}`),
+      // Users
+      getUsers: () => request<{ users: any[] }>(`${p}/users`),
+      // Updates
+      checkUpdates: () => request<Record<string, unknown>>(`${p}/updates`),
+    }
+  },
+
   // Settings
   getSettings: () => request<SettingItem[]>('/api/settings/'),
 
@@ -593,6 +707,17 @@ export const api = {
         request<{ message: string }>(`${p}/test/${channel}`, { method: 'POST' }),
     }
   },
+
+  // Version
+  version: () => request<{ version: string; github_repo: string }>('/api/version'),
+
+  // User menu structure
+  getMenuStructure: () => request<{ menu_structure: string | null }>('/api/users/me/menu-structure'),
+  updateMenuStructure: (menuStructure: string) =>
+    request<{ message: string }>('/api/users/me/menu-structure', {
+      method: 'PUT',
+      body: JSON.stringify({ menu_structure: menuStructure }),
+    }),
 
   // Backup
   backup: {
@@ -755,6 +880,95 @@ export interface NpmAccessList {
   name?: string
   satisfy_any?: number | boolean
   [key: string]: unknown
+}
+
+export interface CloudflareZone {
+  id: string
+  name: string
+  status: string
+  plan: string
+  nameservers: string[]
+  paused: boolean
+  modified_on?: string
+}
+
+export interface CloudflareZoneDetail extends CloudflareZone {
+  raw?: Record<string, unknown>
+}
+
+export interface CloudflareDnsRecord {
+  id: string
+  type: string
+  name: string
+  content?: string
+  ttl?: number
+  proxied?: boolean
+  created_on?: string
+  modified_on?: string
+  priority?: number
+  comment?: string
+  data?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface CloudflareDnsRecordInput {
+  type: string
+  name: string
+  content?: string
+  ttl?: number
+  proxied?: boolean
+  comment?: string
+  priority?: number
+  data?: Record<string, unknown>
+}
+
+export interface CloudflareAnalytics {
+  range: '24h' | '7d' | '30d'
+  requests: number
+  bandwidth: number
+  threats: number
+  page_views: number
+  cached_requests: number
+  uncached_requests: number
+  series?: Array<{ label: string; requests: number; cached: number; uncached: number }>
+  raw?: Record<string, unknown>
+}
+
+export interface CloudflareZoneSettingValue {
+  id?: string
+  value?: unknown
+  editable?: boolean
+  modified_on?: string
+  [key: string]: unknown
+}
+
+export interface CloudflareZoneSettings {
+  ssl?: CloudflareZoneSettingValue
+  always_use_https?: CloudflareZoneSettingValue
+  strict_transport_security?: CloudflareZoneSettingValue
+  security_level?: CloudflareZoneSettingValue
+  cache_level?: CloudflareZoneSettingValue
+  development_mode?: CloudflareZoneSettingValue
+  minify?: CloudflareZoneSettingValue
+  brotli?: CloudflareZoneSettingValue
+  http2?: CloudflareZoneSettingValue
+  http3?: CloudflareZoneSettingValue
+  [key: string]: CloudflareZoneSettingValue | undefined
+}
+
+export interface CloudflareFirewallRule {
+  id: string
+  description?: string
+  action?: string
+  paused?: boolean
+  filter?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface CloudflareSslPayload {
+  ssl_mode?: Record<string, unknown>
+  universal_ssl?: Record<string, unknown>
+  edge_certificates?: Array<Record<string, unknown>>
 }
 
 export interface IncidentComment {
@@ -1505,6 +1719,114 @@ export interface K8sPDB {
   disruptions_allowed: number
   expected_pods: number
   created: string
+}
+
+export interface K8sMetalLBOverview {
+  present: boolean
+  namespace?: string
+  ipaddresspools?: number
+  l2advertisements?: number
+  bgpadvertisements?: number
+  bgppeers?: number
+  invalid_configurations?: number
+  config_errors?: string[]
+}
+
+export interface K8sMetalLBIPAddressPool {
+  name: string
+  namespace: string
+  version: string
+  addresses: string[]
+  auto_assign: boolean
+  avoid_buggy_ips: boolean
+  assigned_ipv4: number
+  available_ipv4: number
+  assigned_ipv6: number
+  available_ipv6: number
+  created: string
+}
+
+export interface K8sMetalLBL2Advertisement {
+  name: string
+  namespace: string
+  version: string
+  ipaddresspools: string[]
+  interfaces: string[]
+  node_selectors: number
+  created: string
+}
+
+export interface K8sMetalLBBGPAdvertisement {
+  name: string
+  namespace: string
+  version: string
+  ipaddresspools: string[]
+  peers: string[]
+  communities: string[]
+  local_pref: number | null
+  node_selectors: number
+  created: string
+}
+
+export interface K8sMetalLBBGPPeer {
+  name: string
+  namespace: string
+  version: string
+  peer_address: string
+  peer_asn: number
+  my_asn: number
+  vrf: string
+  bfd_profile: string
+  node_selectors: number
+  created: string
+}
+
+export interface K8sMetalLBBFDProfile {
+  name: string
+  namespace: string
+  version: string
+  receive_interval: number | null
+  transmit_interval: number | null
+  detect_multiplier: number | null
+  echo_mode: boolean
+  created: string
+}
+
+export interface K8sMetalLBCommunityAlias {
+  name: string
+  value: string
+}
+
+export interface K8sMetalLBCommunity {
+  name: string
+  namespace: string
+  version: string
+  aliases: K8sMetalLBCommunityAlias[]
+  alias_count: number
+  created: string
+}
+
+export interface K8sEtcdMember {
+  name: string
+  namespace: string
+  node: string
+  phase: string
+  ready: boolean
+  restarts: number
+  pod_ip: string
+  host_ip: string
+  advertise_client_urls: string
+  created: string
+}
+
+export interface K8sEtcdStatus {
+  present: boolean
+  reason?: string
+  mode?: string
+  healthy_members?: number
+  total_members?: number
+  total_restarts?: number
+  members?: K8sEtcdMember[]
 }
 
 // --- UniFi types ---

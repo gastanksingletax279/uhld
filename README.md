@@ -47,10 +47,12 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Nginx Proxy Manager plugin (proxy host + certificate CRUD) | ✅ Complete |
 | Network Tools plugin (ping/traceroute live stream, speedtest history) | ✅ Complete |
 | LLM Assistant plugin (OpenAI/Ollama/Anthropic/OpenWebUI) | ✅ Complete |
+| Cloudflare plugin (zones, DNS records, analytics, zone settings) | ✅ Complete |
+| Plex plugin (active sessions, libraries, media actions) | ✅ Complete |
 | Notifications plugin (email, Telegram, webhook) | ✅ Complete |
 | Configuration backup & restore | ✅ Complete |
 | Asset Inventory plugin | ✅ Complete |
-| Plex / Jellyfin / TrueNAS / Synology | Planned |
+| Jellyfin / TrueNAS / Synology | Planned |
 
 ---
 

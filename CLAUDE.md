@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UHLD is a self-hosted, plugin-driven homelab management dashboard. Think Home Assistant, but for infrastructure. Deploy as a Docker container, enable plugins for services you run, and get a unified dashboard for your entire homelab.
 
-**Project status:** Sprint 1 (core framework) complete, Sprint 2 (Proxmox plugin) complete, Sprint 3 (network/DNS plugins) complete, Sprint 4 (container plugins) complete. Next: media/storage plugins, polish.
+**Project status:** Sprint 1 (core framework) complete, Sprint 2 (Proxmox plugin) complete, Sprint 3 (network/DNS plugins) complete, Sprint 4 (container plugins) complete. Sprint 5 is in progress with Plex and Cloudflare now implemented.
 
 ---
 
@@ -389,10 +389,12 @@ See `k8s/deployment.yaml` — Deployment + ClusterIP Service + PVC + Secret refs
 | **Nginx Proxy Manager** | Network | API token or username/password | Proxy host CRUD, certificate CRUD, enable/disable hosts |
 | **Network Tools** | Hardware | Local command execution | Ping/traceroute live streaming (SSE), speedtest history |
 | **LLM Assistant** | Developer | API key (provider dependent) | OpenAI/Ollama/Anthropic/OpenWebUI chat + model listing |
+| **Cloudflare** | Network | API token | Zones, DNS records CRUD, analytics, and zone settings |
+| **Plex Media Server** | Media | X-Plex-Token | Active sessions, libraries, media actions, and server health |
 
 ### Planned Plugins
 
-- Plex, Jellyfin, TrueNAS, Synology
+- Jellyfin, TrueNAS, Synology
 - Grafana, Netdata, Uptime Kuma
 - UPS/NUT, IPMI/BMC
 - Radarr, Sonarr, Bazarr, Lidarr, Readarr, Jellyseerr
@@ -494,6 +496,9 @@ export function apiProxmox(instanceId?: string) {
 - **Frontend:** `ShellTerminal` auto-detects working shell by trying `/bin/bash`, `/bin/sh`, `/bin/ash` etc. with 1-second no-data timeout.
 - **Longhorn / HTTPRoutes:** Fetched via `CustomObjectsApi`. Returns empty lists gracefully if CRDs not installed.
 - **YAML editor:** `_get_resource_yaml` sanitizes via `api_client.sanitize_for_serialization()` and strips `managedFields`. `_apply_resource_yaml` uses strategic merge patch.
+- **YAML dry-run validation:** `/yaml/validate` performs Kubernetes API dry-run patch validation before apply.
+- **MetalLB visibility:** Added MetalLB overview and CRD tabs (IPAddressPools, L2/BGP advertisements, peers, BFD profiles, communities).
+- **etcd health:** Added etcd status endpoint/tab and optional notification alerts for etcd/node health changes during scheduled polling.
 
 ---
 
@@ -571,7 +576,7 @@ ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). Fronte
 - Kubernetes (nodes, workloads, networking, storage, logs, shell, YAML)
 
 ### Sprint 5: Media & Storage (in progress)
-- Plex, Jellyfin, TrueNAS, Synology
+- Plex (implemented), Jellyfin, TrueNAS, Synology
 
 ### Sprint 6: Polish
 - Notifications (Telegram, email, webhook)

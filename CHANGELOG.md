@@ -6,6 +6,46 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.04.01-01] — 2026-04-01
+
+### Added
+
+#### Cloudflare plugin (new)
+- Added a new **Cloudflare** plugin with zone-level monitoring and management.
+- Added zone operations for pause/unpause and cache purge.
+- Added DNS record workflows (list/get/create/update/delete).
+- Added per-zone analytics and security/settings retrieval for dashboard and detail views.
+
+#### Plex Media Server plugin (new)
+- Added a new **Plex** plugin with server health and active session monitoring.
+- Added session management actions including terminate, pause, resume, stop, and seek.
+- Added library and media workflows, including library scan/refresh and item-level refresh/delete actions.
+
+#### Kubernetes plugin — MetalLB and etcd visibility
+- Added dedicated Kubernetes API routes and frontend tabs for **MetalLB** resources:
+  - overview, IPAddressPools, L2Advertisements, BGPAdvertisements, BGPPeers, BFDProfiles, Communities
+- Added **etcd cluster status** endpoint and UI view, including member readiness and restart visibility.
+- Added Kubernetes summary metrics for MetalLB and etcd to the dashboard widget.
+
+#### Kubernetes plugin — YAML validation and alerts
+- Added `POST /api/plugins/kubernetes/{instance}/yaml/validate` for dry-run YAML validation before apply.
+- Added optional Kubernetes plugin alert settings for etcd and node health changes, integrated with the Notifications system.
+
+#### User-level UI persistence and version endpoint
+- Added per-user backend persistence for sidebar menu structure:
+  - `GET /api/users/me/menu-structure`
+  - `PUT /api/users/me/menu-structure`
+- Added application version endpoint:
+  - `GET /api/version`
+
+### Fixed
+
+#### Sidebar menu persistence
+- Sidebar structure now syncs to backend user preferences in addition to localStorage, improving cross-session and cross-device consistency.
+
+#### Kubernetes resource editing UX
+- Added pre-apply validation flow support in API/client to reduce YAML patch/apply failures at submission time.
+
 ## [2026.03.31-05] — 2026-03-31
 
 ### Added

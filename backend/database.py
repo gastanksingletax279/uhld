@@ -89,10 +89,11 @@ async def migrate_db() -> None:
         user_cols = {row[1] for row in result.fetchall()}
         if user_cols:  # table exists
             new_user_cols = [
-                ("role",         "VARCHAR(32) NOT NULL DEFAULT 'admin'"),
-                ("is_active",    "BOOLEAN NOT NULL DEFAULT 1"),
-                ("totp_secret",  "TEXT"),
-                ("totp_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+                ("role",           "VARCHAR(32) NOT NULL DEFAULT 'admin'"),
+                ("is_active",      "BOOLEAN NOT NULL DEFAULT 1"),
+                ("totp_secret",    "TEXT"),
+                ("totp_enabled",   "BOOLEAN NOT NULL DEFAULT 0"),
+                ("menu_structure", "TEXT"),  # JSON: user-customized menu layout
             ]
             for col, typedef in new_user_cols:
                 if col not in user_cols:

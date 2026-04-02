@@ -11,6 +11,9 @@ import {
   K8sServiceAccount, K8sRole, K8sClusterRole, K8sRoleBinding, K8sClusterRoleBinding,
   K8sHelmRelease,
   K8sCRD, K8sResourceQuota, K8sLimitRange, K8sPriorityClass, K8sPDB,
+  K8sMetalLBOverview, K8sMetalLBIPAddressPool, K8sMetalLBL2Advertisement,
+  K8sMetalLBBGPAdvertisement, K8sMetalLBBGPPeer, K8sMetalLBBFDProfile,
+  K8sMetalLBCommunity, K8sEtcdStatus,
   K8sPodDetail,
 } from '../../api/client'
 import { getViewState, setViewState } from '../../store/viewStateStore'
@@ -24,15 +27,17 @@ import {
 
 // ── Tab/Group types ────────────────────────────────────────────────────────
 
-type Group = 'cluster' | 'workloads' | 'networking' | 'storage' | 'config' | 'access' | 'helm'
+type Group = 'cluster' | 'workloads' | 'networking' | 'storage' | 'config' | 'access' | 'metallb' | 'etcd' | 'helm'
 type ClusterTab    = 'overview' | 'nodes' | 'namespaces' | 'crds'
 type WorkloadsTab  = 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'jobs' | 'cronjobs' | 'replicasets' | 'hpas'
 type NetworkingTab = 'services' | 'ingresses' | 'ingressclasses' | 'httproutes' | 'endpoints' | 'networkpolicies'
 type StorageTab    = 'pvs' | 'pvcs' | 'configmaps' | 'secrets' | 'certificates' | 'longhorn' | 'storageclasses'
 type ConfigTab     = 'resourcequotas' | 'limitranges' | 'priorityclasses' | 'pdbs'
 type AccessTab     = 'serviceaccounts' | 'roles' | 'clusterroles' | 'rolebindings' | 'clusterrolebindings'
+type MetalLBTab    = 'metallboverview' | 'metallbippools' | 'metallbl2ads' | 'metallbbgpads' | 'metallbbgppeers' | 'metallbbfdprofiles' | 'metallbcommunities'
+type EtcdTab       = 'etcd'
 type HelmTab       = 'helmreleases'
-type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab | ConfigTab | AccessTab | HelmTab
+type Tab = ClusterTab | WorkloadsTab | NetworkingTab | StorageTab | ConfigTab | AccessTab | MetalLBTab | EtcdTab | HelmTab
 
 const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
   cluster:    [
@@ -65,6 +70,13 @@ const GROUP_TABS: Record<Group, { id: Tab; label: string }[]> = {
     { id: 'clusterroles', label: 'ClusterRoles' }, { id: 'rolebindings', label: 'RoleBindings' },
     { id: 'clusterrolebindings', label: 'ClusterRoleBindings' },
   ],
+  metallb:    [
+    { id: 'metallboverview', label: 'Overview' }, { id: 'metallbippools', label: 'IPAddressPools' },
+    { id: 'metallbl2ads', label: 'L2Advertisements' }, { id: 'metallbbgpads', label: 'BGPAdvertisements' },
+    { id: 'metallbbgppeers', label: 'BGPPeers' }, { id: 'metallbbfdprofiles', label: 'BFDProfiles' },
+    { id: 'metallbcommunities', label: 'Communities' },
+  ],
+  etcd:       [{ id: 'etcd', label: 'Cluster Status' }],
   helm:       [{ id: 'helmreleases', label: 'Releases' }],
 }
 
@@ -172,6 +184,18 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [limitRanges,   setLimitRanges]   = useState<TabState<K8sLimitRange>>(emptyTab())
   const [priorityClasses,setPriorityClasses]= useState<TabState<K8sPriorityClass>>(emptyTab())
   const [pdbs,          setPdbs]          = useState<TabState<K8sPDB>>(emptyTab())
+  const [metallbOverview, setMetallbOverview] = useState<{ data: K8sMetalLBOverview | null; loading: boolean; loaded: boolean; error: string | null }>(
+    { data: null, loading: false, loaded: false, error: null }
+  )
+  const [metallbPools, setMetallbPools] = useState<TabState<K8sMetalLBIPAddressPool>>(emptyTab())
+  const [metallbL2Ads, setMetallbL2Ads] = useState<TabState<K8sMetalLBL2Advertisement>>(emptyTab())
+  const [metallbBGPAds, setMetallbBGPAds] = useState<TabState<K8sMetalLBBGPAdvertisement>>(emptyTab())
+  const [metallbBGPPeers, setMetallbBGPPeers] = useState<TabState<K8sMetalLBBGPPeer>>(emptyTab())
+  const [metallbBFDProfiles, setMetallbBFDProfiles] = useState<TabState<K8sMetalLBBFDProfile>>(emptyTab())
+  const [metallbCommunities, setMetallbCommunities] = useState<TabState<K8sMetalLBCommunity>>(emptyTab())
+  const [etcdStatus, setEtcdStatus] = useState<{ data: K8sEtcdStatus | null; loading: boolean; loaded: boolean; error: string | null }>(
+    { data: null, loading: false, loaded: false, error: null }
+  )
   const [selectedPods,  setSelectedPods]  = useState<Set<string>>(new Set())
 
   const [actionLoading,   setActionLoading]   = useState<string | null>(null)
@@ -200,7 +224,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   }
 
   const loadTab = useCallback((t: Tab, ns = nsFilter, force = false) => {
-    const skip = (s: TabState<unknown> | OverviewState) => !force && s.loaded
+    const skip = (s: { loaded: boolean }) => !force && s.loaded
     switch (t) {
       case 'overview':
         if (!skip(overview)) {
@@ -246,6 +270,26 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       case 'limitranges':           load(setLimitRanges,    () => k8s.limitranges(ns), 'limitranges'); break
       case 'priorityclasses':       if (!skip(priorityClasses)) load(setPriorityClasses, () => k8s.priorityclasses(), 'priorityclasses'); break
       case 'pdbs':                  load(setPdbs,           () => k8s.pdbs(ns), 'pdbs'); break
+      case 'metallboverview':
+        if (!skip(metallbOverview)) {
+          setMetallbOverview((s) => ({ ...s, loading: true, error: null }))
+          k8s.metallbOverview().then((data) => setMetallbOverview({ data, loading: false, loaded: true, error: null }))
+            .catch((e: unknown) => setMetallbOverview((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : 'Failed' })))
+        }
+        break
+      case 'metallbippools':        load(setMetallbPools, () => k8s.metallbIPAddressPools(), 'ipaddresspools'); break
+      case 'metallbl2ads':          load(setMetallbL2Ads, () => k8s.metallbL2Advertisements(), 'l2advertisements'); break
+      case 'metallbbgpads':         load(setMetallbBGPAds, () => k8s.metallbBGPAdvertisements(), 'bgpadvertisements'); break
+      case 'metallbbgppeers':       load(setMetallbBGPPeers, () => k8s.metallbBGPPeers(), 'bgppeers'); break
+      case 'metallbbfdprofiles':    load(setMetallbBFDProfiles, () => k8s.metallbBFDProfiles(), 'bfdprofiles'); break
+      case 'metallbcommunities':    load(setMetallbCommunities, () => k8s.metallbCommunities(), 'communities'); break
+      case 'etcd':
+        if (!skip(etcdStatus)) {
+          setEtcdStatus((s) => ({ ...s, loading: true, error: null }))
+          k8s.etcdStatus().then((data) => setEtcdStatus({ data, loading: false, loaded: true, error: null }))
+            .catch((e: unknown) => setEtcdStatus((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : 'Failed' })))
+        }
+        break
     }
   }, [nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -265,6 +309,10 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     setNetPolicies(emptyTab()); setStorageClasses(emptyTab()); setCrds(emptyTab())
     setResourceQuotas(emptyTab()); setLimitRanges(emptyTab())
     setPriorityClasses(emptyTab()); setPdbs(emptyTab())
+    setMetallbOverview({ data: null, loading: false, loaded: false, error: null })
+    setMetallbPools(emptyTab()); setMetallbL2Ads(emptyTab()); setMetallbBGPAds(emptyTab())
+    setMetallbBGPPeers(emptyTab()); setMetallbBFDProfiles(emptyTab()); setMetallbCommunities(emptyTab())
+    setEtcdStatus({ data: null, loading: false, loaded: false, error: null })
     setSelectedPods(new Set())
     loadTab(tab)
   }, [instanceId])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -357,8 +405,8 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   }
   function refresh() { loadTab(tab, nsFilter, true) }
 
-  function getTabState(t: Tab): TabState<unknown> | OverviewState {
-    const map: Record<Tab, TabState<unknown> | OverviewState> = {
+  function getTabState(t: Tab): { loading: boolean; loaded: boolean } {
+    const map: Record<Tab, { loading: boolean; loaded: boolean }> = {
       overview: overview,
       nodes: nodes as TabState<unknown>, namespaces: namespaces as TabState<unknown>,
       pods: pods as TabState<unknown>, deployments: deployments as TabState<unknown>,
@@ -377,6 +425,11 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       priorityclasses: priorityClasses as TabState<unknown>, pdbs: pdbs as TabState<unknown>,
       serviceaccounts: svcAccounts as TabState<unknown>, roles: roles as TabState<unknown>,
       clusterroles: clusterRoles as TabState<unknown>, rolebindings: roleBindings as TabState<unknown>,
+      metallboverview: metallbOverview,
+      metallbippools: metallbPools as TabState<unknown>, metallbl2ads: metallbL2Ads as TabState<unknown>,
+      metallbbgpads: metallbBGPAds as TabState<unknown>, metallbbgppeers: metallbBGPPeers as TabState<unknown>,
+      metallbbfdprofiles: metallbBFDProfiles as TabState<unknown>, metallbcommunities: metallbCommunities as TabState<unknown>,
+      etcd: etcdStatus,
       clusterrolebindings: crBindings as TabState<unknown>, helmreleases: helmReleases as TabState<unknown>,
     }
     return map[t]
@@ -589,6 +642,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     if (!yamlModal) return
     setYamlModal((m) => m ? { ...m, saving: true, error: null, saved: false } : null)
     try {
+      await k8s.validateYaml(yamlModal.yaml)
       await k8s.applyYaml(yamlModal.yaml)
       setYamlModal((m) => m ? { ...m, saving: false, saved: true } : null)
     } catch (e: unknown) {
@@ -623,6 +677,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     { id: 'cluster', label: 'Cluster' }, { id: 'workloads', label: 'Workloads' },
     { id: 'networking', label: 'Networking' }, { id: 'storage', label: 'Storage' },
     { id: 'config', label: 'Config' }, { id: 'access', label: 'Access Control' },
+    { id: 'metallb', label: 'MetalLB' }, { id: 'etcd', label: 'etcd' },
     { id: 'helm', label: 'Helm' },
   ]
 
@@ -708,6 +763,16 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {tab === 'clusterroles'         && <ClusterRolesTable      state={clusterRoles} />}
       {tab === 'rolebindings'         && <RoleBindingsTable      state={roleBindings} />}
       {tab === 'clusterrolebindings'  && <ClusterRoleBindingsTable state={crBindings} />}
+      {/* MetalLB */}
+      {tab === 'metallboverview'      && <MetalLBOverviewPanel state={metallbOverview} onRefresh={() => { setMetallbOverview({ data: null, loading: false, loaded: false, error: null }); loadTab('metallboverview', '', true) }} />}
+      {tab === 'metallbippools'       && <MetalLBIPAddressPoolsTable state={metallbPools} onYaml={(p) => openYaml('ipaddresspool', p.name, p.namespace)} />}
+      {tab === 'metallbl2ads'         && <MetalLBL2AdvertisementsTable state={metallbL2Ads} onYaml={(a) => openYaml('l2advertisement', a.name, a.namespace)} />}
+      {tab === 'metallbbgpads'        && <MetalLBBGPAdvertisementsTable state={metallbBGPAds} onYaml={(a) => openYaml('bgpadvertisement', a.name, a.namespace)} />}
+      {tab === 'metallbbgppeers'      && <MetalLBBGPPeersTable state={metallbBGPPeers} onYaml={(p) => openYaml('bgppeer', p.name, p.namespace)} />}
+      {tab === 'metallbbfdprofiles'   && <MetalLBBFDProfilesTable state={metallbBFDProfiles} onYaml={(p) => openYaml('bfdprofile', p.name, p.namespace)} />}
+      {tab === 'metallbcommunities'   && <MetalLBCommunitiesTable state={metallbCommunities} onYaml={(c) => openYaml('community', c.name, c.namespace)} />}
+      {/* etcd */}
+      {tab === 'etcd'                 && <EtcdStatusPanel state={etcdStatus} onRefresh={() => { setEtcdStatus({ data: null, loading: false, loaded: false, error: null }); loadTab('etcd', '', true) }} />}
       {/* Helm */}
       {tab === 'helmreleases'         && <HelmReleasesTable      state={helmReleases} />}
       {tab === 'longhorn'      && (
@@ -818,7 +883,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
           wide
           footer={
             <div className="flex items-center justify-between px-4 py-3 border-t border-surface-4 flex-shrink-0">
-              <div className="text-xs text-muted">Edit and apply changes directly to the cluster</div>
+              <div className="text-xs text-muted">YAML is server-validated before apply</div>
               <div className="flex items-center gap-2">
                 {yamlModal.saved && <span className="flex items-center gap-1 text-xs text-green-400"><Check className="w-3.5 h-3.5" />Applied</span>}
                 {yamlModal.error && <span className="text-xs text-danger">{yamlModal.error}</span>}
@@ -2073,6 +2138,231 @@ function OverviewPanel({ state, onRefresh }: { state: OverviewState; onRefresh: 
             </table>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── MetalLB & etcd Panels ─────────────────────────────────────────────────
+
+function MetalLBOverviewPanel({ state, onRefresh }: {
+  state: { data: K8sMetalLBOverview | null; loading: boolean; loaded: boolean; error: string | null }
+  onRefresh: () => void
+}) {
+  if (state.loading) return <LoadingSpinner />
+  if (state.error) return <ErrorBanner msg={state.error} />
+  if (!state.data) return null
+
+  if (!state.data.present) {
+    return (
+      <div className="card p-4">
+        <div className="text-sm text-muted">MetalLB was not detected on this cluster.</div>
+      </div>
+    )
+  }
+
+  const d = state.data
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted">Namespace: <span className="font-mono">{d.namespace || 'metallb-system'}</span></div>
+        <button onClick={onRefresh} className="btn-ghost text-xs gap-1.5"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <SummaryCard label="IP Pools" value={String(d.ipaddresspools ?? 0)} sub="configured" ok={(d.ipaddresspools ?? 0) > 0} />
+        <SummaryCard label="L2 Ads" value={String(d.l2advertisements ?? 0)} sub="resources" ok />
+        <SummaryCard label="BGP Ads" value={String(d.bgpadvertisements ?? 0)} sub="resources" ok />
+        <SummaryCard label="BGP Peers" value={String(d.bgppeers ?? 0)} sub="neighbors" ok />
+      </div>
+      {(d.invalid_configurations ?? 0) > 0 && (
+        <div className="card p-3 border border-yellow-500/30 bg-yellow-500/10">
+          <div className="text-xs text-yellow-300 font-semibold mb-1">Invalid MetalLB configuration detected</div>
+          <div className="space-y-1">
+            {(d.config_errors ?? []).map((e, i) => (
+              <div key={i} className="text-xs text-muted">{e}</div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MetalLBIPAddressPoolsTable({ state, onYaml }: { state: TabState<K8sMetalLBIPAddressPool>; onYaml: (p: K8sMetalLBIPAddressPool) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [
+    { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'addresses', label: 'Addresses' },
+    { key: 'assigned_ipv4', label: 'Assigned IPv4' }, { key: 'available_ipv4', label: 'Available IPv4' }, { key: 'created', label: 'Age' },
+  ]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB IPAddressPools found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((p) => (
+        <tr key={`${p.namespace}/${p.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{p.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-xs text-muted">{p.addresses.join(', ') || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.assigned_ipv4}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.available_ipv4}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(p)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function MetalLBL2AdvertisementsTable({ state, onYaml }: { state: TabState<K8sMetalLBL2Advertisement>; onYaml: (a: K8sMetalLBL2Advertisement) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'ipaddresspools', label: 'Pools' }, { key: 'interfaces', label: 'Interfaces' }, { key: 'created', label: 'Age' }]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB L2Advertisements found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((a) => (
+        <tr key={`${a.namespace}/${a.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{a.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={a.namespace} /></td>
+          <td className="px-3 py-2 text-xs text-muted">{a.ipaddresspools.join(', ') || '<all>'}</td>
+          <td className="px-3 py-2 text-xs text-muted">{a.interfaces.join(', ') || '<all>'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(a.created)}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(a)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function MetalLBBGPAdvertisementsTable({ state, onYaml }: { state: TabState<K8sMetalLBBGPAdvertisement>; onYaml: (a: K8sMetalLBBGPAdvertisement) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'ipaddresspools', label: 'Pools' }, { key: 'peers', label: 'Peers' }, { key: 'communities', label: 'Communities' }, { key: 'created', label: 'Age' }]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB BGPAdvertisements found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((a) => (
+        <tr key={`${a.namespace}/${a.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{a.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={a.namespace} /></td>
+          <td className="px-3 py-2 text-xs text-muted">{a.ipaddresspools.join(', ') || '<all>'}</td>
+          <td className="px-3 py-2 text-xs text-muted">{a.peers.join(', ') || '<all>'}</td>
+          <td className="px-3 py-2 text-xs text-muted">{a.communities.join(', ') || '—'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(a.created)}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(a)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function MetalLBBGPPeersTable({ state, onYaml }: { state: TabState<K8sMetalLBBGPPeer>; onYaml: (p: K8sMetalLBBGPPeer) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'peer_address', label: 'Peer Address' }, { key: 'peer_asn', label: 'Peer ASN' }, { key: 'my_asn', label: 'My ASN' }, { key: 'created', label: 'Age' }]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB BGPPeers found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((p) => (
+        <tr key={`${p.namespace}/${p.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{p.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-xs">{p.peer_address || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.peer_asn || '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.my_asn || '—'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(p)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function MetalLBBFDProfilesTable({ state, onYaml }: { state: TabState<K8sMetalLBBFDProfile>; onYaml: (p: K8sMetalLBBFDProfile) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'receive_interval', label: 'RX ms' }, { key: 'transmit_interval', label: 'TX ms' }, { key: 'detect_multiplier', label: 'Multiplier' }, { key: 'created', label: 'Age' }]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB BFDProfiles found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
+      {sorted(state.data, sort).map((p) => (
+        <tr key={`${p.namespace}/${p.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{p.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.receive_interval ?? '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.transmit_interval ?? '—'}</td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{p.detect_multiplier ?? '—'}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(p)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function MetalLBCommunitiesTable({ state, onYaml }: { state: TabState<K8sMetalLBCommunity>; onYaml: (c: K8sMetalLBCommunity) => void }) {
+  const [sort, toggle] = useSort()
+  const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'alias_count', label: 'Aliases' }, { key: 'created', label: 'Age' }]
+  return (
+    <DataTable state={state} emptyMsg="No MetalLB Community resources found." cols={cols} sort={sort} onSort={toggle} extraCols={['', '']}>
+      {sorted(state.data, sort).map((c) => (
+        <tr key={`${c.namespace}/${c.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+          <td className="px-3 py-2 font-medium text-gray-200">{c.name}</td>
+          <td className="px-3 py-2"><NsBadge ns={c.namespace} /></td>
+          <td className="px-3 py-2 font-mono text-muted text-center">{c.alias_count}</td>
+          <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(c.created)}</td>
+          <td className="px-3 py-2 text-xs text-muted">{c.aliases.map((a) => `${a.name}:${a.value}`).join(', ') || '—'}</td>
+          <td className="px-3 py-2"><YamlBtn onClick={() => onYaml(c)} /></td>
+        </tr>
+      ))}
+    </DataTable>
+  )
+}
+
+function EtcdStatusPanel({ state, onRefresh }: {
+  state: { data: K8sEtcdStatus | null; loading: boolean; loaded: boolean; error: string | null }
+  onRefresh: () => void
+}) {
+  if (state.loading) return <LoadingSpinner />
+  if (state.error) return <ErrorBanner msg={state.error} />
+  if (!state.data) return null
+
+  const d = state.data
+  if (!d.present) {
+    return (
+      <div className="card p-4">
+        <div className="text-sm text-muted">{d.reason || 'etcd not detected on this cluster.'}</div>
+        <div className="text-xs text-muted mt-2">This is expected on some single-node k3s installs that still use embedded SQLite.</div>
+      </div>
+    )
+  }
+
+  const members = d.members ?? []
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted">Mode: <span className="font-mono">{d.mode || 'unknown'}</span></div>
+        <button onClick={onRefresh} className="btn-ghost text-xs gap-1.5"><RefreshCw className="w-3.5 h-3.5" />Refresh</button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <SummaryCard label="Members" value={`${d.healthy_members ?? 0}/${d.total_members ?? 0}`} sub="healthy" ok={(d.healthy_members ?? 0) === (d.total_members ?? 0)} />
+        <SummaryCard label="Restarts" value={String(d.total_restarts ?? 0)} sub="across members" warn={(d.total_restarts ?? 0) > 0} />
+      </div>
+      <div className="card overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-surface-4 text-muted">
+              <th className="px-3 py-2 text-left font-medium">Member</th>
+              <th className="px-3 py-2 text-left font-medium">Node</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
+              <th className="px-3 py-2 text-right font-medium">Restarts</th>
+              <th className="px-3 py-2 text-left font-medium">Advertise URLs</th>
+              <th className="px-3 py-2 text-left font-medium">Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={`${m.namespace}/${m.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+                <td className="px-3 py-2 font-mono text-gray-300">{m.name}</td>
+                <td className="px-3 py-2 text-muted">{m.node || '—'}</td>
+                <td className="px-3 py-2">{m.ready && m.phase === 'Running' ? <span className="badge-ok">Healthy</span> : <span className="badge-error">Unhealthy</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-muted">{m.restarts}</td>
+                <td className="px-3 py-2 text-muted text-xs font-mono">{m.advertise_client_urls || '—'}</td>
+                <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(m.created)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
