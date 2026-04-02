@@ -46,6 +46,10 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 #### Kubernetes resource editing UX
 - Added pre-apply validation flow support in API/client to reduce YAML patch/apply failures at submission time.
 
+#### Security hardening
+- Removed exception-detail exposure from Network Tools SSE stream errors to avoid leaking internal traceback/context to clients.
+- Updated frontend lockfile to `lodash@4.17.21` to remediate open high/medium Dependabot advisories.
+
 ## [2026.03.31-05] — 2026-03-31
 
 ### Added

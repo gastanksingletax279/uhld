@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 from typing import TYPE_CHECKING, AsyncGenerator
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from backend.plugins.builtin.network_tools.plugin import NetworkToolsPlugin
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
+logger = logging.getLogger(__name__)
 
 
 def _validate_host(host: str) -> str:
@@ -91,8 +93,9 @@ async def _stream_command(args: list[str], timeout: int) -> AsyncGenerator[str, 
             proc.kill()
             await proc.wait()
         yield f"data: {json.dumps({'error': 'Command timed out'})}\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    except Exception:
+        logger.exception("Network tools stream command failed")
+        yield f"data: {json.dumps({'error': 'Command failed'})}\n\n"
 
 
 class PingBody(BaseModel):
