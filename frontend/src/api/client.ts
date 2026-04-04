@@ -195,8 +195,12 @@ export const api = {
         request<{ rrddata: ProxmoxRrdPoint[] }>(`${p}/nodes/${node}/rrddata?timeframe=${timeframe}`),
       vmRrd: (node: string, vmid: number, type: string, timeframe = 'hour') =>
         request<{ rrddata: ProxmoxRrdPoint[] }>(`${p}/nodes/${node}/${type}/${vmid}/rrddata?timeframe=${timeframe}`),
+      vmConfig: (node: string, vmid: number, type: string) =>
+        request<Record<string, unknown>>(`${p}/nodes/${node}/${type}/${vmid}/config`),
       clusterResources: () =>
         request<{ resources: ProxmoxResource[] }>(`${p}/cluster/resources`),
+      clusterStatus: () =>
+        request<{ status: ProxmoxClusterStatusItem[] }>(`${p}/cluster/status`),
     }
   },
 
@@ -482,10 +486,15 @@ export const api = {
   remoteTcpdump: (instanceId = 'default') => {
     const p = instanceId === 'default' ? '/api/plugins/remote_tcpdump' : `/api/plugins/remote_tcpdump/${instanceId}`
     return {
-      run: (body: { interface: string; packet_count?: number; filter?: string; timeout_seconds?: number; remote?: boolean }) =>
+      info: () => request<{ ssh_host: string | null; ssh_user: string | null; ssh_port: number }>(`${p}/info`),
+      run: (body: TcpdumpCaptureOptions) =>
         request<CommandResult>(`${p}/capture/run`, { method: 'POST', body: JSON.stringify(body) }),
+      streamUrl: p + '/capture/stream',
+      pcapUrl: p + '/capture/pcap',
+      interfaces: (remote = true) => request<{ interfaces: string[] }>(`${p}/interfaces?remote=${remote}`),
       list: () => request<{ items: TcpdumpCaptureItem[] }>(`${p}/captures`),
       get: (id: string) => request<TcpdumpCaptureItem>(`${p}/captures/${id}`),
+      deleteCapture: (id: string) => request<{ ok: boolean }>(`${p}/captures/${id}`, { method: 'DELETE' }),
     }
   },
 
@@ -824,12 +833,27 @@ export interface CommandResult {
   stderr: string
 }
 
+export interface TcpdumpCaptureOptions {
+  interface: string
+  packet_count?: number | null
+  duration_seconds?: number | null
+  filter?: string
+  remote?: boolean
+  snaplen?: number
+  ascii_output?: boolean
+  hex_ascii_output?: boolean
+  verbosity?: number
+  print_ethernet?: boolean
+  timestamp_format?: string
+}
+
 export interface TcpdumpCaptureItem {
   id: string
   created_at: string
   mode?: string
   interface?: string
   packet_count?: number
+  duration_seconds?: number
   filter?: string
   command?: string
   exit_code?: number
@@ -932,6 +956,7 @@ export interface CloudflareAnalytics {
   uncached_requests: number
   series?: Array<{ label: string; requests: number; cached: number; uncached: number }>
   raw?: Record<string, unknown>
+  analytics_unavailable?: boolean
 }
 
 export interface CloudflareZoneSettingValue {
@@ -1030,6 +1055,19 @@ export interface ProxmoxRrdPoint {
   [key: string]: number | undefined
 }
 
+export interface ProxmoxClusterStatusItem {
+  type: 'cluster' | 'node'
+  id: string
+  name?: string
+  quorate?: number   // 1 = quorate
+  nodes?: number
+  version?: number
+  ip?: string
+  online?: number    // 1 = online
+  local?: number     // 1 = this is the local node
+  nodeid?: number
+}
+
 export interface ProxmoxResource {
   id: string
   type: 'node' | 'vm' | 'qemu' | 'lxc' | 'storage' | 'pool' | 'sdn' | 'cluster' | string
@@ -1070,6 +1108,7 @@ export interface ProxmoxVM {
   mem: number       // bytes
   maxmem: number    // bytes
   uptime: number    // seconds
+  tags?: string     // semicolon-separated e.g. "host;linux;vm"
 }
 
 export interface ProxmoxStorage {

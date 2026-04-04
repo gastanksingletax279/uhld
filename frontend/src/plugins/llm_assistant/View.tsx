@@ -10,6 +10,7 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
   const [prompt, setPrompt] = useState('')
   const [reply, setReply] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadingStatus, setLoadingStatus] = useState(false)
   const [models, setModels] = useState<ModelOption[]>([])
   const [selectedModel, setSelectedModel] = useState('')
   const [temperature, setTemperature] = useState(0.7)
@@ -45,6 +46,22 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
     }
   }
 
+  async function sendInfraStatus() {
+    setLoadingStatus(true)
+    setError('')
+    try {
+      const data = await api.dashboardSummary()
+      const statusJson = JSON.stringify(data, null, 2)
+      setPrompt(
+        `Here is the current status of my homelab infrastructure as a JSON snapshot:\n\n${statusJson}\n\nPlease summarize the overall health, highlight any issues or errors, and let me know if anything needs attention.`
+      )
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch infrastructure status')
+    } finally {
+      setLoadingStatus(false)
+    }
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       send()
@@ -55,13 +72,23 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">LLM Assistant</h2>
-        <button 
-          className="btn-ghost text-sm" 
-          onClick={loadModels}
-          title="Refresh available models"
-        >
-          🔄 Refresh Models
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-ghost text-sm"
+            onClick={sendInfraStatus}
+            disabled={loadingStatus}
+            title="Fetch current status of all plugins and load it as a prompt"
+          >
+            {loadingStatus ? '⏳ Loading...' : '📊 Infrastructure Status'}
+          </button>
+          <button
+            className="btn-ghost text-sm"
+            onClick={loadModels}
+            title="Refresh available models"
+          >
+            🔄 Refresh Models
+          </button>
+        </div>
       </div>
 
       {/* Configuration Bar */}

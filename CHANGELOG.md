@@ -6,6 +6,49 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.04.04-01] — 2026-04-04
+
+### Added
+
+#### Proxmox — sidebar tree + Datacenter summary view
+- Redesigned the Proxmox plugin to use a **left-sidebar tree** layout (Datacenter → Nodes → VMs/CTs), matching the native Proxmox GUI layout
+- Added **Datacenter summary view** as the default landing page: cluster name, node online badge, 4 stat cards (nodes, CPU%, RAM, guests), and a full "All Guests" table with tag chips
+- Added `GET /cluster/status` backend endpoint to fetch cluster name and per-node online state
+- Added **VM/CT detail view**: clicking any VM or container in the tree navigates to a full detail page with stats, RRD performance charts (CPU, RAM, network I/O), network interfaces table, disk table, and configuration key/values
+- Added `GET /nodes/{node}/qemu/{vmid}/config` and `GET /nodes/{node}/lxc/{vmid}/config` backend endpoints
+- Added **VM tag support** — Proxmox tags (semicolon-separated) are parsed and rendered as accent-colored chips in the sidebar, VM detail header, and the Datacenter guest table
+- RRD chart time axis now correctly differentiates `hour` (time only), `day` (date + time), and `week/month` (date) tick formats
+
+#### LLM Assistant — Infrastructure Status button
+- Added **📊 Infrastructure Status** button to the LLM Assistant header that fetches the current dashboard summary and sends it as a prompt, letting users ask questions about their live infrastructure state
+
+#### Remote Packet Capture — comprehensive overhaul
+- **Remote (SSH) mode is now the default** — the UI leads with remote-first since that is the primary use case
+- Added **SSH host badge** in the header showing the configured capture target (`user@host`) at a glance
+- Added **GET /info** endpoint returning non-sensitive SSH connection info for the UI
+- Replaced packet count-only termination with a **Packets / Duration toggle** — capture for N packets or N seconds, or both simultaneously
+- Added **36 presets** organized into 7 groups: Web, DNS/DHCP, Infrastructure, Remote Access, Routing, Mail/File, Utilities (including DHCP, mDNS, LLDP, STP, BGP, OSPF, RDP, SMB, NetFlow, sFlow, TACACS+, and more)
+- Added **MAC address filter field** in the simple filter builder → generates `ether host AA:BB:CC:DD:EE:FF` BPF syntax
+- Added **Output Options panel** (collapsible): snaplen (`-s`), payload display (none / ASCII `-A` / Hex+ASCII `-X`), verbosity (default / `-v` / `-vv` / `-vvv`), timestamp format (5 options), print Ethernet headers (`-e`)
+- Added **live command preview** — shows the exact `ssh user@host "tcpdump …"` command that will execute, updating in real-time as settings change
+- Added **live streaming capture** — packets stream line-by-line via SSE as they are captured; packet lines in green, tcpdump stderr in yellow; animated cursor while running
+- Added **in-output search** with match highlighting — filter and highlight text within the live capture output
+- Added **Download PCAP** button — runs a fresh capture with `-w -` and downloads a binary `.pcap` file (open in Wireshark)
+- Added `GET /interfaces?remote=true/false` endpoint — reads `/proc/net/dev` locally or via SSH; interface field becomes a dropdown populated with real interfaces
+- Added **stop button** to abort an in-progress streaming capture
+- Added **delete button** with inline confirmation on each history entry
+- Added `DELETE /captures/{id}` backend endpoint
+
+#### Cloudflare — graceful analytics degradation
+- DNS Analytics (`/dns_analytics/report`) now degrades gracefully when the API token lacks `DNS Analytics Read` permission — returns empty metrics with `analytics_unavailable: true` flag instead of polluting logs with 403 warnings on every poll cycle
+- Frontend Analytics tab shows a yellow notice banner explaining which token permission is missing
+
+### Fixed
+- **VM config load error** in Proxmox VM detail view now shows an error banner instead of silently rendering an empty config panel
+- **Proxmox RRD day-view chart** axis ticks now show date + time instead of time-only (which was identical to the hour view)
+
+---
+
 ## [2026.04.01-01] — 2026-04-01
 
 ### Added

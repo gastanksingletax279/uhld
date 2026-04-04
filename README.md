@@ -2,7 +2,7 @@
 
 > **Work in progress — under heavy development. Expect breaking changes.**
 
-A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Proxmox, Docker, Kubernetes, AdGuard, TrueNAS, Plex, and more from a single unified interface.
+A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Proxmox, Docker, Kubernetes, AdGuard, Pi-hole, Tailscale, UniFi, Plex, Cloudflare, and more from a single unified interface.
 
 > This project is built entirely using [Claude Code](https://claude.ai/code), Anthropic's agentic coding tool.
 
@@ -51,7 +51,10 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Plex plugin (active sessions, libraries, media actions) | ✅ Complete |
 | Notifications plugin (email, Telegram, webhook) | ✅ Complete |
 | Configuration backup & restore | ✅ Complete |
-| Asset Inventory plugin | ✅ Complete |
+| Asset Inventory plugin (CMDB for homelab hardware) | ✅ Complete |
+| Patch Panel plugin (port/device/switch mapping) | ✅ Complete |
+| Remote Packet Capture (tcpdump local or SSH, live stream, PCAP download) | ✅ Complete |
+| Tasks & Incidents plugin (infrastructure task queue) | ✅ Complete |
 | Jellyfin / TrueNAS / Synology | Planned |
 
 ---

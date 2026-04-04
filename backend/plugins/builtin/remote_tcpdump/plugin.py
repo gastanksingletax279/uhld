@@ -23,7 +23,20 @@ class RemoteTcpdumpPlugin(PluginBase):
             "ssh_host": {"type": "string", "title": "SSH Host"},
             "ssh_port": {"type": "integer", "title": "SSH Port", "default": 22},
             "ssh_user": {"type": "string", "title": "SSH User"},
+            "ssh_key_content": {
+                "type": "string",
+                "title": "SSH Private Key (paste content)",
+                "description": "Paste the private key directly. Takes priority over SSH Private Key Path.",
+                "sensitive": True,
+                "format": "textarea",
+            },
             "ssh_key_path": {"type": "string", "title": "SSH Private Key Path"},
+            "ssh_password": {
+                "type": "string",
+                "title": "SSH Password",
+                "description": "Used when no key is provided. Requires sshpass to be installed.",
+                "sensitive": True,
+            },
         },
         "required": [],
     }
@@ -61,6 +74,11 @@ class RemoteTcpdumpPlugin(PluginBase):
             if item.get("id") == capture_id:
                 return item
         return None
+
+    def delete_capture(self, capture_id: str) -> bool:
+        before = len(self._captures)
+        self._captures = [c for c in self._captures if c.get("id") != capture_id]
+        return len(self._captures) < before
 
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.remote_tcpdump.api import make_router

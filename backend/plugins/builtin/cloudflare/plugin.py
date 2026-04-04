@@ -507,7 +507,23 @@ class CloudflarePlugin(PluginBase):
                 },
             }
         except Exception as exc:
-            raise self._map_exception(exc, "Failed to fetch zone analytics")
+            mapped = self._map_exception(exc, "Failed to fetch zone analytics")
+            if mapped.status_code == 403:
+                # DNS Analytics requires a separate token permission. Degrade gracefully
+                # instead of polluting logs on every poll cycle.
+                logger.debug("Cloudflare DNS analytics unavailable for zone %s (token missing DNS Analytics Read permission)", zone_id)
+                return {
+                    "range": range_key,
+                    "requests": 0,
+                    "bandwidth": 0,
+                    "threats": 0,
+                    "page_views": 0,
+                    "cached_requests": 0,
+                    "uncached_requests": 0,
+                    "series": [],
+                    "analytics_unavailable": True,
+                }
+            raise mapped
 
     async def get_zone_settings(self, zone_id: str) -> dict[str, Any]:
         client = self._get_client()

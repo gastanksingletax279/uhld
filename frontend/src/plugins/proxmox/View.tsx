@@ -20,18 +20,19 @@ import {
   ExternalLink, ChevronUp, ChevronDown, ArrowLeft, ChevronRight,
   Database, Network, Cpu, MemoryStick,
 } from 'lucide-react'
-import { getViewState, setViewState } from '../../store/viewStateStore'
 
-type Tab = 'nodes' | 'vms' | 'storage' | 'tree'
+type Tab = 'nodes' | 'vms' | 'storage'
 type SortDir = 'asc' | 'desc'
 type VmSortKey = 'name' | 'vmid' | 'node' | 'type' | 'status' | 'cpu' | 'mem' | 'uptime'
 type Timeframe = 'hour' | 'day' | 'week' | 'month'
 
+type ProxmoxSelection =
+  | { type: 'datacenter' }
+  | { type: 'node'; node: ProxmoxNode }
+  | { type: 'vm'; vm: ProxmoxVM }
+
 export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string }) {
   const proxmox = api.proxmox(instanceId)
-  const _key = `proxmox:${instanceId}`
-  const [tab, setTabRaw] = useState<Tab>(getViewState(`${_key}:tab`, 'nodes') as Tab)
-  function setTab(t: Tab) { setViewState(`${_key}:tab`, t); setTabRaw(t) }
   const [nodes, setNodes] = useState<ProxmoxNode[]>([])
   const [vms, setVms] = useState<ProxmoxVM[]>([])
   const [storage, setStorage] = useState<ProxmoxStorage[]>([])
@@ -40,7 +41,8 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [proxmoxUrl, setProxmoxUrl] = useState<string | null>(null)
-  const [selectedNode, setSelectedNode] = useState<ProxmoxNode | null>(null)
+  const [clusterName, setClusterName] = useState<string>('Datacenter')
+  const [selection, setSelection] = useState<ProxmoxSelection>({ type: 'datacenter' })
 
   async function load() {
     setLoading(true)
@@ -67,6 +69,12 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
           }
         })
         .catch(() => {}),
+      proxmox.clusterStatus()
+        .then((r) => {
+          const clusterItem = r.status.find((i) => i.type === 'cluster')
+          if (clusterItem?.name) setClusterName(clusterItem.name)
+        })
+        .catch(() => {}),
     ])
 
     setErrors(errs)
@@ -84,6 +92,10 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
       await new Promise((r) => setTimeout(r, 1500))
       const res = await proxmox.allVms()
       setVms(res.vms)
+      if (selection.type === 'vm' && selection.vm.vmid === vm.vmid && selection.vm.node === vm.node) {
+        const updated = res.vms.find((v) => v.vmid === vm.vmid && v.node === vm.node)
+        if (updated) setSelection({ type: 'vm', vm: updated })
+      }
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Action failed')
     } finally {
@@ -91,41 +103,16 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
     }
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'nodes', label: `Nodes (${nodes.length})` },
-    { id: 'vms', label: `VMs / CTs (${vms.length})` },
-    { id: 'storage', label: `Storage (${storage.length})` },
-    { id: 'tree', label: 'Tree View' },
-  ]
-
-  // If a node is selected, show the detail view instead of the tab content
-  if (selectedNode) {
-    return (
-      <NodeDetailView
-        node={selectedNode}
-        vms={vms.filter((v) => v.node === selectedNode.node)}
-        instanceId={instanceId}
-        onBack={() => setSelectedNode(null)}
-        onVmAction={vmAction}
-        actionLoading={actionLoading}
-      />
-    )
-  }
-
   return (
-    <div className="space-y-4 max-w-6xl">
+    <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Server className="w-5 h-5 text-muted" />
           <h2 className="text-base font-semibold text-white">Proxmox VE</h2>
           {proxmoxUrl && (
-            <a
-              href={proxmoxUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors"
-            >
+            <a href={proxmoxUrl} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors">
               {proxmoxUrl}
               <ExternalLink className="w-3 h-3" />
             </a>
@@ -145,6 +132,469 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
         </div>
       )}
 
+      {/* Main layout: sidebar + content */}
+      <div className="flex gap-3 items-start">
+        {/* Tree sidebar */}
+        <div className="w-52 flex-shrink-0">
+          <ProxmoxTreeSidebar
+            nodes={nodes}
+            vms={vms}
+            selection={selection}
+            onSelect={setSelection}
+            loading={loading}
+            clusterName={clusterName}
+          />
+        </div>
+        {/* Main content */}
+        <div className="flex-1 min-w-0">
+          {loading && nodes.length === 0 ? (
+            <div className="flex items-center gap-2 text-muted text-sm py-16 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading…
+            </div>
+          ) : selection.type === 'datacenter' ? (
+            <DatacenterSummary
+              nodes={nodes}
+              vms={vms}
+              storage={storage}
+              clusterName={clusterName}
+              errors={errors}
+              instanceId={instanceId}
+              onSelectNode={(node) => setSelection({ type: 'node', node })}
+              onSelectVm={(vm) => setSelection({ type: 'vm', vm })}
+            />
+          ) : selection.type === 'node' ? (
+            <NodeDetailView
+              node={selection.node}
+              vms={vms.filter((v) => v.node === selection.node.node)}
+              instanceId={instanceId}
+              onBack={() => setSelection({ type: 'datacenter' })}
+              onVmAction={vmAction}
+              onSelectVm={(vm) => setSelection({ type: 'vm', vm })}
+              actionLoading={actionLoading}
+            />
+          ) : (
+            <VmDetailView
+              vm={selection.vm}
+              instanceId={instanceId}
+              onBack={() => {
+                const parentNode = nodes.find((n) => n.node === selection.vm.node)
+                setSelection(parentNode ? { type: 'node', node: parentNode } : { type: 'datacenter' })
+              }}
+              onAction={vmAction}
+              actionLoading={actionLoading}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── VM / LXC Detail View ──────────────────────────────────────────────────────
+
+function parseKVString(s: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  s.split(',').forEach((part) => {
+    const eq = part.indexOf('=')
+    if (eq !== -1) result[part.slice(0, eq).trim()] = part.slice(eq + 1).trim()
+  })
+  return result
+}
+
+function VmDetailView({
+  vm,
+  instanceId,
+  onBack,
+  onAction,
+  actionLoading,
+}: {
+  vm: ProxmoxVM
+  instanceId: string
+  onBack: () => void
+  onAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
+  actionLoading: string | null
+}) {
+  const proxmox = api.proxmox(instanceId)
+  const vmType = vm.type === 'lxc' ? 'lxc' : 'qemu'
+  const [timeframe, setTimeframe] = useState<Timeframe>('hour')
+  const [rrdData, setRrdData] = useState<ProxmoxRrdPoint[]>([])
+  const [rrdLoading, setRrdLoading] = useState(true)
+  const [rrdError, setRrdError] = useState<string | null>(null)
+  const [config, setConfig] = useState<Record<string, unknown> | null>(null)
+
+  const [configError, setConfigError] = useState<string | null>(null)
+  useEffect(() => {
+    proxmox.vmConfig(vm.node, vm.vmid, vmType)
+      .then(setConfig)
+      .catch((e: unknown) => setConfigError(e instanceof Error ? e.message : 'Failed to load config'))
+  }, [vm.node, vm.vmid, vmType])
+
+  useEffect(() => {
+    setRrdLoading(true)
+    setRrdError(null)
+    proxmox.vmRrd(vm.node, vm.vmid, vmType, timeframe)
+      .then((r) => setRrdData(r.rrddata))
+      .catch((e: unknown) => setRrdError(e instanceof Error ? e.message : 'Failed to load performance data'))
+      .finally(() => setRrdLoading(false))
+  }, [vm.node, vm.vmid, timeframe])
+
+  const running = vm.status === 'running'
+  const cpuPct = Math.round((vm.cpu ?? 0) * 100)
+  const memPct = vm.maxmem > 0 ? Math.round((vm.mem / vm.maxmem) * 100) : 0
+  const isActing = actionLoading?.startsWith(`${vm.node}-${vm.vmid}`)
+
+  // Parse network interfaces (net0, net1, …)
+  const netIfaces = config
+    ? Object.entries(config)
+        .filter(([k]) => /^net\d+$/.test(k))
+        .map(([slot, v]) => {
+          const raw = String(v)
+          const parsed = parseKVString(raw)
+          const firstPart = raw.split(',')[0]
+          const eqIdx = firstPart.indexOf('=')
+          const model = vmType === 'lxc' ? (parsed.name ?? slot) : (eqIdx !== -1 ? firstPart.slice(0, eqIdx) : firstPart)
+          const mac = vmType === 'lxc' ? (parsed.hwaddr ?? '—') : (eqIdx !== -1 ? firstPart.slice(eqIdx + 1) : '—')
+          return {
+            slot,
+            model,
+            mac,
+            bridge: parsed.bridge ?? '—',
+            ip: parsed.ip ?? parsed.ip6 ?? null,
+            vlan: parsed.tag ?? null,
+          }
+        })
+    : []
+
+  // Parse disks
+  const diskPattern = vmType === 'lxc' ? /^(rootfs|mp\d+)$/ : /^(scsi|virtio|ide|sata)\d+$/
+  const disks = config
+    ? Object.entries(config)
+        .filter(([k, v]) => diskPattern.test(k) && !String(v).startsWith('none'))
+        .map(([slot, v]) => {
+          const raw = String(v)
+          const parsed = parseKVString(raw)
+          const storageVol = raw.split(',')[0]
+          return { slot, storageVol, size: parsed.size ?? null, mountpoint: parsed.mp ?? null }
+        })
+    : []
+
+  // RRD chart data
+  const chartData = rrdData.map((pt) => ({
+    time: pt.time,
+    cpu: typeof pt.cpu === 'number' ? Math.round(pt.cpu * 100 * 10) / 10 : null,
+    memPct: typeof pt.mem === 'number' && typeof pt.maxmem === 'number' && pt.maxmem > 0
+      ? Math.round((pt.mem / pt.maxmem) * 100 * 10) / 10 : null,
+    netin: typeof pt.netin === 'number' ? Math.round(pt.netin / 1024) : null,
+    netout: typeof pt.netout === 'number' ? Math.round(pt.netout / 1024) : null,
+  }))
+
+  // General config key/value pairs to display
+  const configFields: [string, unknown][] = config ? (
+    [
+      ['Cores', config.cores] as [string, unknown],
+      ['Sockets', config.sockets] as [string, unknown],
+      ['Memory', config.memory ? `${config.memory} MiB` : null] as [string, unknown],
+      ['Swap', config.swap ? `${config.swap} MiB` : null] as [string, unknown],
+      ['OS Type', config.ostype] as [string, unknown],
+      ['Hostname', config.hostname] as [string, unknown],
+      ['Machine', config.machine] as [string, unknown],
+      ['BIOS', config.bios] as [string, unknown],
+      ['Guest Agent', config.agent === '1' || config.agent === 1 ? 'enabled' : config.agent ? String(config.agent) : null] as [string, unknown],
+      ['Boot Order', config.boot] as [string, unknown],
+      ['Description', config.description] as [string, unknown],
+    ].filter(([, v]) => v != null && v !== '')
+  ) : []
+
+  return (
+    <div className="space-y-4 max-w-6xl">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted hover:text-gray-200 transition-colors">
+            <ArrowLeft className="w-4 h-4" />
+            ← Datacenter
+          </button>
+          <span className="text-surface-4">/</span>
+          <span className="font-mono text-muted text-sm">#{vm.vmid}</span>
+          <h2 className="text-base font-semibold text-white">{vm.name ?? `${vm.type}/${vm.vmid}`}</h2>
+          <span className="badge bg-surface-4 text-muted">{vm.type}</span>
+          <StatusBadge status={vm.status} />
+          {vm.tags && vm.tags.split(';').filter(Boolean).map((tag) => (
+            <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/20 text-accent/90 border border-accent/20">
+              {tag}
+            </span>
+          ))}
+          <span className="text-xs text-muted">on {vm.node}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {(['hour', 'day', 'week', 'month'] as Timeframe[]).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  timeframe === tf ? 'bg-surface-4 text-gray-100' : 'text-muted hover:text-gray-300'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+          {isActing ? (
+            <Loader2 className="w-4 h-4 animate-spin text-muted" />
+          ) : running ? (
+            <div className="flex gap-1">
+              <ActionBtn icon={<RotateCcw className="w-3.5 h-3.5" />} title="Reboot" onClick={() => onAction('reboot', vm)} />
+              <ActionBtn icon={<Square className="w-3.5 h-3.5" />} title="Graceful Shutdown" onClick={() => onAction('shutdown', vm)} />
+            </div>
+          ) : (
+            <ActionBtn icon={<Play className="w-3.5 h-3.5" />} title="Start" onClick={() => onAction('start', vm)} className="text-success hover:bg-success/10" />
+          )}
+        </div>
+      </div>
+
+      {/* Stats */}
+      {running && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <StatCard icon={<Cpu className="w-4 h-4" />} label="CPU" value={`${cpuPct}%`} sub={`${vm.cpus} vCPU${vm.cpus !== 1 ? 's' : ''}`} pct={cpuPct} />
+          <StatCard icon={<MemoryStick className="w-4 h-4" />} label="Memory" value={fmtBytes(vm.mem)} sub={`of ${fmtBytes(vm.maxmem)}`} pct={memPct} />
+          <StatCard icon={<Network className="w-4 h-4" />} label="Uptime" value={fmtUptime(vm.uptime)} sub="up" />
+        </div>
+      )}
+
+      {/* Performance charts */}
+      {rrdError ? (
+        <SectionError message={rrdError} />
+      ) : rrdLoading && chartData.length === 0 ? (
+        <div className="flex items-center gap-2 text-muted text-sm py-8 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading performance data…
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <PerfGraph title="CPU Usage" data={chartData} series={[{ key: 'cpu', color: '#3b82f6', name: 'CPU %' }]} unit="%" yMax={100} timeframe={timeframe} />
+          <PerfGraph title="Memory Usage" data={chartData} series={[{ key: 'memPct', color: '#8b5cf6', name: 'Mem %' }]} unit="%" yMax={100} timeframe={timeframe} />
+          <PerfGraph title="Network I/O" data={chartData} series={[{ key: 'netin', color: '#10b981', name: 'In' }, { key: 'netout', color: '#f59e0b', name: 'Out' }]} unit=" KB/s" timeframe={timeframe} />
+        </div>
+      )}
+
+      {configError && <SectionError message={configError} />}
+
+      {/* Network + Disk config */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="card p-3 space-y-2">
+          <h3 className="text-sm font-semibold text-white">Network Interfaces</h3>
+          {netIfaces.length === 0 ? (
+            <div className="text-xs text-muted py-2">No interfaces in config</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted border-b border-surface-4">
+                  <th className="text-left py-1 pr-3 font-medium">Slot</th>
+                  <th className="text-left py-1 pr-3 font-medium">Model / Name</th>
+                  <th className="text-left py-1 pr-3 font-medium">Bridge</th>
+                  <th className="text-left py-1 font-medium">IP / MAC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {netIfaces.map(({ slot, model, mac, bridge, ip, vlan }) => (
+                  <tr key={slot} className="border-b border-surface-4/30">
+                    <td className="py-1.5 pr-3 font-mono text-muted">{slot}</td>
+                    <td className="py-1.5 pr-3 text-gray-300">{model}{vlan ? <span className="ml-1 badge bg-surface-4 text-muted">vlan {vlan}</span> : null}</td>
+                    <td className="py-1.5 pr-3 text-gray-300">{bridge}</td>
+                    <td className="py-1.5 font-mono text-gray-400 text-[10px] break-all">{ip ?? mac}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="card p-3 space-y-2">
+          <h3 className="text-sm font-semibold text-white">Disks</h3>
+          {disks.length === 0 ? (
+            <div className="text-xs text-muted py-2">No disks in config</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted border-b border-surface-4">
+                  <th className="text-left py-1 pr-3 font-medium">Slot</th>
+                  <th className="text-left py-1 pr-3 font-medium">Storage / Volume</th>
+                  <th className="text-left py-1 pr-3 font-medium">Size</th>
+                  {vmType === 'lxc' && <th className="text-left py-1 font-medium">Mount</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {disks.map(({ slot, storageVol, size, mountpoint }) => (
+                  <tr key={slot} className="border-b border-surface-4/30">
+                    <td className="py-1.5 pr-3 font-mono text-muted">{slot}</td>
+                    <td className="py-1.5 pr-3 text-gray-300 truncate max-w-[120px]">{storageVol}</td>
+                    <td className="py-1.5 pr-3 font-mono text-gray-400">{size ?? '—'}</td>
+                    {vmType === 'lxc' && <td className="py-1.5 font-mono text-gray-400">{mountpoint ?? (slot === 'rootfs' ? '/' : '—')}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* General config */}
+      {configFields.length > 0 && (
+        <div className="card p-3 space-y-2">
+          <h3 className="text-sm font-semibold text-white">Configuration</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-6 gap-y-1.5 text-xs">
+            {configFields.map(([label, value]) => (
+              <div key={String(label)}>
+                <span className="text-muted">{label}: </span>
+                <span className="text-gray-300">{String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Proxmox Tree Sidebar ──────────────────────────────────────────────────────
+
+function ProxmoxTreeSidebar({
+  nodes,
+  vms,
+  selection,
+  onSelect,
+  loading,
+  clusterName,
+}: {
+  nodes: ProxmoxNode[]
+  vms: ProxmoxVM[]
+  selection: ProxmoxSelection
+  onSelect: (s: ProxmoxSelection) => void
+  loading: boolean
+  clusterName: string
+}) {
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (selection.type === 'vm') setExpandedNodes((p) => new Set([...p, selection.vm.node]))
+    if (selection.type === 'node') setExpandedNodes((p) => new Set([...p, selection.node.node]))
+  }, [selection])
+
+  function toggleNode(name: string) {
+    setExpandedNodes((p) => { const n = new Set(p); n.has(name) ? n.delete(name) : n.add(name); return n })
+  }
+
+  const dcSelected = selection.type === 'datacenter'
+
+  return (
+    <div className="card p-1.5 space-y-0.5 select-none">
+      <button
+        onClick={() => onSelect({ type: 'datacenter' })}
+        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
+          dcSelected ? 'bg-accent/20 text-accent' : 'text-gray-300 hover:bg-surface-3/50'
+        }`}
+      >
+        <Server className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="font-medium truncate text-xs">{clusterName}</span>
+        {loading && <Loader2 className="w-3 h-3 animate-spin ml-auto text-muted" />}
+      </button>
+
+      {nodes.map((node) => {
+        const nodeVms = [...vms.filter((v) => v.node === node.node)].sort((a, b) => a.vmid - b.vmid)
+        const online = node.status === 'online'
+        const expanded = expandedNodes.has(node.node)
+        const nodeSelected = selection.type === 'node' && selection.node.node === node.node
+
+        return (
+          <div key={node.node}>
+            <div className="flex items-center">
+              <button onClick={() => toggleNode(node.node)} className="p-1 text-muted hover:text-gray-300 flex-shrink-0">
+                {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              </button>
+              <button
+                onClick={() => onSelect({ type: 'node', node })}
+                className={`flex-1 flex items-center gap-1.5 px-1 py-1 rounded text-left transition-colors text-xs ${
+                  nodeSelected ? 'bg-accent/20 text-accent' : 'text-gray-300 hover:bg-surface-3/50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${online ? 'bg-success' : 'bg-danger'}`} />
+                <span className="font-medium truncate">{node.node}</span>
+                <span className="text-muted ml-auto font-normal text-[10px]">{nodeVms.length}</span>
+              </button>
+            </div>
+            {expanded && (
+              <div className="ml-5 space-y-0.5">
+                {nodeVms.map((vm) => {
+                  const vmSelected = selection.type === 'vm' && selection.vm.vmid === vm.vmid && selection.vm.node === vm.node
+                  const running = vm.status === 'running'
+                  return (
+                    <button
+                      key={`${vm.node}-${vm.vmid}`}
+                      onClick={() => onSelect({ type: 'vm', vm })}
+                      className={`w-full flex items-center gap-1.5 px-2 py-0.5 rounded text-left transition-colors text-xs ${
+                        vmSelected ? 'bg-accent/20 text-accent' : 'text-muted hover:bg-surface-3/50 hover:text-gray-300'
+                      }`}
+                    >
+                      <span className="flex-shrink-0 text-[10px]">{vm.type === 'lxc' ? '⬡' : '▣'}</span>
+                      <span className="font-mono text-[10px] w-8 flex-shrink-0 opacity-70">{vm.vmid}</span>
+                      <span className="truncate">{vm.name ?? `${vm.type}/${vm.vmid}`}</span>
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ml-auto ${running ? 'bg-success' : 'bg-surface-4'}`} />
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Datacenter Summary ────────────────────────────────────────────────────────
+
+function DatacenterSummary({
+  nodes,
+  vms,
+  clusterName,
+  errors,
+  onSelectNode,
+  onSelectVm,
+}: {
+  nodes: ProxmoxNode[]
+  vms: ProxmoxVM[]
+  storage: ProxmoxStorage[]
+  clusterName: string
+  errors: Record<string, string>
+  instanceId: string
+  onSelectNode?: (node: ProxmoxNode) => void
+  onSelectVm?: (vm: ProxmoxVM) => void
+}) {
+  const onlineNodes = nodes.filter((n) => n.status === 'online').length
+  const runningVms = vms.filter((v) => v.status === 'running').length
+  const totalVms = vms.filter((v) => v.type === 'qemu').length
+  const totalLxc = vms.filter((v) => v.type === 'lxc').length
+  const totalCpuPct = (() => {
+    const used = nodes.reduce((s, n) => s + n.cpu * n.maxcpu, 0)
+    const max = nodes.reduce((s, n) => s + n.maxcpu, 0)
+    return max > 0 ? Math.round((used / max) * 100) : 0
+  })()
+  const totalMem = nodes.reduce((s, n) => s + n.mem, 0)
+  const totalMaxMem = nodes.reduce((s, n) => s + n.maxmem, 0)
+  const totalMaxCpu = nodes.reduce((s, n) => s + n.maxcpu, 0)
+  const totalMemPct = totalMaxMem > 0 ? Math.round((totalMem / totalMaxMem) * 100) : 0
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <h3 className="text-sm font-semibold text-white">{clusterName}</h3>
+        <span className={onlineNodes === nodes.length && nodes.length > 0 ? 'badge-ok' : 'badge-warning'}>
+          {onlineNodes}/{nodes.length} nodes online
+        </span>
+      </div>
+
       {Object.keys(errors).length > 0 && (
         <div className="space-y-1">
           {Object.entries(errors).map(([section, msg]) => (
@@ -156,44 +606,86 @@ export function ProxmoxView({ instanceId = 'default' }: { instanceId?: string })
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-surface-4">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === t.id
-                ? 'border-accent text-accent'
-                : 'border-transparent text-muted hover:text-gray-300'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard icon={<Server className="w-4 h-4" />} label="Nodes" value={String(nodes.length)} sub={`${onlineNodes} online`} />
+        <StatCard icon={<Cpu className="w-4 h-4" />} label="Total CPU" value={`${totalCpuPct}%`} sub={`${totalMaxCpu} cores`} pct={totalCpuPct} />
+        <StatCard icon={<MemoryStick className="w-4 h-4" />} label="Total RAM" value={fmtBytes(totalMem)} sub={`of ${fmtBytes(totalMaxMem)}`} pct={totalMemPct} />
+        <StatCard icon={<Database className="w-4 h-4" />} label="Guests" value={String(vms.length)} sub={`${runningVms} running · ${totalVms} VMs · ${totalLxc} CTs`} />
       </div>
 
-      {loading && nodes.length === 0 ? (
-        <div className="flex items-center gap-2 text-muted text-sm py-8 justify-center">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          Loading…
+      {nodes.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Nodes</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {nodes.map((node) => (
+              <NodeCard key={node.node} node={node} onSelect={() => onSelectNode?.(node)} />
+            ))}
+          </div>
         </div>
-      ) : (
-        <>
-          {tab === 'nodes' && (
-            <NodesTab nodes={nodes} error={errors.nodes} onSelectNode={setSelectedNode} />
-          )}
-          {tab === 'vms' && (
-            <VmsTab vms={vms} error={errors.vms} actionLoading={actionLoading} onAction={vmAction} />
-          )}
-          {tab === 'storage' && <StorageTab storage={storage} error={errors.storage} />}
-          {tab === 'tree' && (
-            <TreeTab instanceId={instanceId} vms={vms} onSelectNode={(name) => {
-              const n = nodes.find((nd) => nd.node === name)
-              if (n) setSelectedNode(n)
-            }} />
-          )}
-        </>
+      )}
+
+      {vms.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">All Guests</h4>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-4 text-muted">
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">ID</th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-left font-medium">Node</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">CPU</th>
+                  <th className="px-3 py-2 text-right font-medium">Memory</th>
+                  <th className="px-3 py-2 text-right font-medium">Uptime</th>
+                  <th className="px-3 py-2 text-left font-medium">Tags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...vms].sort((a, b) => a.vmid - b.vmid).map((vm) => {
+                  const running = vm.status === 'running'
+                  const cpuPct = Math.round((vm.cpu ?? 0) * 100)
+                  const tags = vm.tags ? vm.tags.split(';').filter(Boolean) : []
+                  return (
+                    <tr key={`${vm.node}-${vm.vmid}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
+                      <td className="px-3 py-2"><span className="badge bg-surface-4 text-muted">{vm.type}</span></td>
+                      <td className="px-3 py-2 font-mono text-muted">{vm.vmid}</td>
+                      <td className="px-3 py-2">
+                        {onSelectVm ? (
+                          <button onClick={() => onSelectVm(vm)} className="flex items-center gap-1 font-medium text-accent hover:text-accent/80 transition-colors">
+                            {vm.name ?? '—'}
+                            <ChevronRight className="w-3 h-3 opacity-60" />
+                          </button>
+                        ) : (
+                          <span className="font-medium text-gray-200">{vm.name ?? '—'}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-muted">{vm.node}</td>
+                      <td className="px-3 py-2"><StatusBadge status={vm.status} /></td>
+                      <td className="px-3 py-2 text-right font-mono text-muted">{running ? `${cpuPct}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right font-mono text-muted">
+                        {running ? `${fmtBytes(vm.mem)} / ${fmtBytes(vm.maxmem)}` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-muted">
+                        {running ? fmtUptime(vm.uptime) : '—'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {tags.map((tag) => (
+                            <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/20 text-accent/90 border border-accent/20">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -207,6 +699,7 @@ function NodeDetailView({
   instanceId,
   onBack,
   onVmAction,
+  onSelectVm,
   actionLoading,
 }: {
   node: ProxmoxNode
@@ -214,6 +707,7 @@ function NodeDetailView({
   instanceId: string
   onBack: () => void
   onVmAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
+  onSelectVm?: (vm: ProxmoxVM) => void
   actionLoading: string | null
 }) {
   const proxmox = api.proxmox(instanceId)
@@ -313,7 +807,7 @@ function NodeDetailView({
             className="flex items-center gap-1.5 text-sm text-muted hover:text-gray-200 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back
+            ← Datacenter
           </button>
           <span className="text-surface-4">/</span>
           <Server className="w-4 h-4 text-muted" />
@@ -442,6 +936,7 @@ function NodeDetailView({
             vms={vms}
             actionLoading={actionLoading}
             onAction={onVmAction}
+            onSelectVm={onSelectVm}
           />
         )}
       </div>
@@ -513,7 +1008,7 @@ function PerfGraph({
   function fmtTick(time: number) {
     const d = new Date(time * 1000)
     if (timeframe === 'hour') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (timeframe === 'day') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (timeframe === 'day') return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
   }
 
@@ -593,10 +1088,12 @@ function TreeTab({
   instanceId,
   vms,
   onSelectNode,
+  onSelectVm,
 }: {
   instanceId: string
   vms: ProxmoxVM[]
   onSelectNode: (nodeName: string) => void
+  onSelectVm?: (vm: ProxmoxVM) => void
 }) {
   const proxmox = api.proxmox(instanceId)
   const [resources, setResources] = useState<ProxmoxResource[]>([])
@@ -648,11 +1145,7 @@ function TreeTab({
   const getNodeVms = (nodeName: string) => {
     const fromResources = vmResources.filter((r) => (r.node ?? '') === nodeName)
     if (fromResources.length > 0) {
-      return [...fromResources].sort((a, b) => {
-        const nameCmp = (a.name ?? '').localeCompare((b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
-        if (nameCmp !== 0) return nameCmp
-        return (a.vmid ?? 0) - (b.vmid ?? 0)
-      })
+      return [...fromResources].sort((a, b) => (a.vmid ?? 0) - (b.vmid ?? 0))
     }
     return vms
       .filter((v) => v.node === nodeName)
@@ -669,11 +1162,7 @@ function TreeTab({
         maxmem: v.maxmem,
         uptime: v.uptime,
       }))
-      .sort((a, b) => {
-        const nameCmp = (a.name ?? '').localeCompare((b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
-        if (nameCmp !== 0) return nameCmp
-        return (a.vmid ?? 0) - (b.vmid ?? 0)
-      })
+      .sort((a, b) => (a.vmid ?? 0) - (b.vmid ?? 0))
   }
 
   const getNodeStorage = (nodeName: string) => storageResources.filter((r) => r.node === nodeName)
@@ -778,16 +1267,38 @@ function TreeTab({
                           ? Math.round((vm.mem / vm.maxmem) * 100)
                           : null
 
+                        function handleVmClick() {
+                          if (!onSelectVm) return
+                          const full = vms.find((v) => v.vmid === (vm.vmid ?? 0) && v.node === (vm.node ?? ''))
+                          if (full) {
+                            onSelectVm(full)
+                          } else {
+                            onSelectVm({
+                              vmid: vm.vmid ?? 0,
+                              name: vm.name ?? `${vm.type}/${vm.vmid}`,
+                              status: vm.status ?? 'unknown',
+                              type: vm.type === 'lxc' ? 'lxc' : 'qemu',
+                              node: vm.node ?? '',
+                              cpu: vm.cpu ?? 0,
+                              cpus: vm.maxcpu ?? 0,
+                              mem: vm.mem ?? 0,
+                              maxmem: vm.maxmem ?? 0,
+                              uptime: vm.uptime ?? 0,
+                            })
+                          }
+                        }
+
                         return (
                           <div
                             key={vm.id}
-                            className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-3/30 text-xs"
+                            className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${onSelectVm ? 'hover:bg-surface-3/50 cursor-pointer' : 'hover:bg-surface-3/30'}`}
+                            onClick={onSelectVm ? handleVmClick : undefined}
                           >
                             <span className="w-3 h-3 text-center text-muted">
                               {vm.type === 'lxc' ? '⬡' : '▣'}
                             </span>
                             <span className="font-mono text-muted w-12">{vm.vmid ?? '—'}</span>
-                            <span className={`font-medium ${running ? 'text-gray-200' : 'text-muted'}`}>
+                            <span className={`font-medium ${running ? (onSelectVm ? 'text-accent hover:text-accent/80' : 'text-gray-200') : 'text-muted'}`}>
                               {vm.name ?? `${vm.type}/${vm.vmid}`}
                             </span>
                             <span className="badge bg-surface-4 text-muted text-[10px]">{vm.type}</span>
@@ -801,6 +1312,7 @@ function TreeTab({
                             {running && vm.uptime != null && (
                               <span className="text-muted ml-auto">{fmtUptime(vm.uptime)}</span>
                             )}
+                            {onSelectVm && <ChevronRight className="w-3 h-3 text-muted ml-auto opacity-50" />}
                           </div>
                         )
                       })}
@@ -904,14 +1416,16 @@ function VmsTab({
   error,
   actionLoading,
   onAction,
+  onSelectVm,
 }: {
   vms: ProxmoxVM[]
   error?: string
   actionLoading: string | null
   onAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
+  onSelectVm?: (vm: ProxmoxVM) => void
 }) {
   const [filter, setFilter] = useState<'all' | 'running' | 'stopped'>('all')
-  const [sortKey, setSortKey] = useState<VmSortKey>('name')
+  const [sortKey, setSortKey] = useState<VmSortKey>('vmid')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   if (error) return <SectionError message={error} />
@@ -982,7 +1496,7 @@ function VmsTab({
           </thead>
           <tbody>
             {filtered.map((vm) => (
-              <VmRow key={`${vm.node}-${vm.vmid}`} vm={vm} actionLoading={actionLoading} onAction={onAction} />
+              <VmRow key={`${vm.node}-${vm.vmid}`} vm={vm} actionLoading={actionLoading} onAction={onAction} onSelect={onSelectVm ? () => onSelectVm(vm) : undefined} />
             ))}
           </tbody>
         </table>
@@ -1024,10 +1538,12 @@ function VmRow({
   vm,
   actionLoading,
   onAction,
+  onSelect,
 }: {
   vm: ProxmoxVM
   actionLoading: string | null
   onAction: (action: 'start' | 'stop' | 'shutdown' | 'reboot', vm: ProxmoxVM) => void
+  onSelect?: () => void
 }) {
   const running = vm.status === 'running'
   const cpuPct = Math.round((vm.cpu ?? 0) * 100)
@@ -1036,7 +1552,16 @@ function VmRow({
   return (
     <tr className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
       <td className="px-3 py-2 font-mono text-muted">{vm.vmid}</td>
-      <td className="px-3 py-2 font-medium text-gray-200">{vm.name ?? '—'}</td>
+      <td className="px-3 py-2">
+        {onSelect ? (
+          <button onClick={onSelect} className="flex items-center gap-1 font-medium text-accent hover:text-accent/80 transition-colors text-left">
+            {vm.name ?? '—'}
+            <ChevronRight className="w-3 h-3 opacity-60" />
+          </button>
+        ) : (
+          <span className="font-medium text-gray-200">{vm.name ?? '—'}</span>
+        )}
+      </td>
       <td className="px-3 py-2 text-muted">{vm.node}</td>
       <td className="px-3 py-2">
         <span className="badge bg-surface-4 text-muted">{vm.type}</span>

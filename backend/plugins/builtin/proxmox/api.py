@@ -143,6 +143,28 @@ def make_router(plugin: ProxmoxPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    # ── VM / LXC config ──────────────────────────────────────────────────────
+
+    @router.get("/nodes/{node}/qemu/{vmid}/config")
+    async def get_qemu_config(node: str, vmid: int):
+        """Return full hardware config for a QEMU VM."""
+        try:
+            client = plugin._client_or_raise()
+            config = await asyncio.to_thread(client.nodes(node).qemu(vmid).config.get)
+            return config
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/nodes/{node}/lxc/{vmid}/config")
+    async def get_lxc_config(node: str, vmid: int):
+        """Return full config for an LXC container."""
+        try:
+            client = plugin._client_or_raise()
+            config = await asyncio.to_thread(client.nodes(node).lxc(vmid).config.get)
+            return config
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     # ── Storage ───────────────────────────────────────────────────────────────
 
     @router.get("/storage")
@@ -242,6 +264,16 @@ def make_router(plugin: ProxmoxPlugin) -> APIRouter:
             raise HTTPException(status_code=502, detail=str(exc))
 
     # ── Cluster resources (tree view) ─────────────────────────────────────────
+
+    @router.get("/cluster/status")
+    async def get_cluster_status():
+        """Return cluster name, quorum status, and per-node online state from /cluster/status."""
+        try:
+            client = plugin._client_or_raise()
+            items = await asyncio.to_thread(client.cluster.status.get)
+            return {"status": items}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @router.get("/cluster/resources")
     async def get_cluster_resources():

@@ -16,6 +16,18 @@ ENV UHLD_VERSION=${VERSION}
 
 WORKDIR /app
 
+# Install network tools for diagnostics
+RUN apt-get update \
+    && apt-get install -y \
+    dnsutils \
+    iputils-ping \
+    speedtest-cli \
+    ssh \
+    tcpdump \
+    traceroute \
+    whois \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -28,16 +40,6 @@ COPY --from=frontend-build /app/static ./static/
 
 # Data volume mount point
 RUN mkdir -p /data
-
-# Install network tools for diagnostics
-RUN apt-get update \
-    && apt-get install -y \
-    dnsutils \
-    iputils-ping \
-    speedtest-cli \
-    traceroute \
-    whois \
-    && rm -rf /var/lib/apt/lists/*
 
 ENV DATABASE_PATH=/data/uhld.db \
     LOG_LEVEL=INFO \

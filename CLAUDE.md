@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UHLD is a self-hosted, plugin-driven homelab management dashboard. Think Home Assistant, but for infrastructure. Deploy as a Docker container, enable plugins for services you run, and get a unified dashboard for your entire homelab.
 
-**Project status:** Sprint 1 (core framework) complete, Sprint 2 (Proxmox plugin) complete, Sprint 3 (network/DNS plugins) complete, Sprint 4 (container plugins) complete. Sprint 5 is in progress with Plex and Cloudflare now implemented.
+**Project status:** Sprints 1–5 complete. Implemented: core framework, Proxmox, network/DNS plugins, container plugins, media/network utility plugins (Plex, Cloudflare, Notifications, Asset Inventory, Patch Panel, Remote Packet Capture, Tasks & Incidents). See `TODO.md` for the active backlog.
 
 ---
 
@@ -49,12 +49,16 @@ cd frontend && npx tsc --noEmit
 ### Build
 
 ```bash
-# Local Docker build
+# Local Docker build (uses docker-compose.local.yml)
 ./build-run.sh                    # copies .env.example → .env on first run
 ./build-run.sh --no-cache         # fresh build
+./build-run-local.sh              # alternative local build script
 
-# Docker Compose
-docker compose up -d              # start
+# Docker Compose variants
+docker compose up -d              # default (docker-compose.yml)
+docker compose -f docker-compose.local.yml up -d   # local image
+docker compose -f docker-compose.ghcr.yml up -d    # GHCR image
+docker compose -f docker-compose.tailscale.yml up -d  # Tailscale serve
 docker compose down               # stop
 ```
 
@@ -90,6 +94,10 @@ pytest backend/tests/
 # Run single test file
 pytest backend/tests/test_auth.py::test_login -v
 ```
+
+### Active Backlog
+
+`TODO.md` in the project root is the authoritative backlog. Read it before starting new work; mark items complete after finishing them.
 
 ---
 
@@ -138,14 +146,8 @@ frontend/src/
 │   └── Settings/
 │       ├── PluginManager.tsx  # List all plugins, enable/disable/configure
 │       └── PluginConfigForm.tsx  # Dynamic form from config_schema
-├── plugins/              # Per-plugin Widget.tsx and View.tsx
-│   ├── proxmox/
-│   ├── adguard/
-│   ├── pihole/
-│   ├── tailscale/
-│   ├── unifi/
-│   ├── docker/
-│   └── kubernetes/
+├── plugins/              # Per-plugin Widget.tsx and View.tsx (one dir per plugin_id)
+│   └── registry.tsx     # Maps plugin_id → {Widget, View} components
 └── pages/
     ├── LoginPage.tsx           # Auth + theme toggle + first-launch setup
     ├── DashboardPage.tsx       # Dashboard grid
@@ -379,7 +381,7 @@ See `k8s/deployment.yaml` — Deployment + ClusterIP Service + PVC + Secret refs
 
 | Plugin | Category | Auth | Key Features |
 |---|---|---|---|
-| **Proxmox VE** | Virtualization | API token or user+password | Nodes, VMs/LXC, storage, start/stop/reboot, tasks |
+| **Proxmox VE** | Virtualization | API token or user+password | Sidebar tree (Datacenter→Node→VM), Datacenter summary, VM/CT detail with RRD charts, tags, start/stop/reboot |
 | **AdGuard Home** | Network/DNS | Basic auth | Stats, query log, protection toggle |
 | **Pi-hole** | Network/DNS | API key | Stats, query log, blocking toggle |
 | **Tailscale** | Network | Bearer token + optional local socket | Devices, users, DNS, ACL editor, sidecar status |
@@ -391,6 +393,11 @@ See `k8s/deployment.yaml` — Deployment + ClusterIP Service + PVC + Secret refs
 | **LLM Assistant** | Developer | API key (provider dependent) | OpenAI/Ollama/Anthropic/OpenWebUI chat + model listing |
 | **Cloudflare** | Network | API token | Zones, DNS records CRUD, analytics, and zone settings |
 | **Plex Media Server** | Media | X-Plex-Token | Active sessions, libraries, media actions, and server health |
+| **Notifications** | — | SMTP/Telegram/Webhook | Alert via email, Telegram, and HMAC-signed webhooks on plugin health changes |
+| **Asset Inventory** | Infrastructure | None | Lightweight CMDB for homelab hardware — servers, switches, desktops |
+| **Patch Panel** | Network | None | Track patch panel ports, linked devices, and switch mappings |
+| **Remote Packet Capture** | Network | None / SSH key | tcpdump local or SSH; live SSE streaming, PCAP download, 36 presets, output flags (-A/-X/-v/-e), MAC filter, duration-based capture, interface discovery |
+| **Tasks & Incidents** | Automation | None | Built-in queue for infrastructure tasks, incidents, and requests |
 
 ### Planned Plugins
 
@@ -488,6 +495,16 @@ export function apiProxmox(instanceId?: string) {
 
 ---
 
+## Proxmox Plugin Notes
+
+- **Layout:** Sidebar tree (Datacenter → Nodes → VMs/CTs) + main content area. `ProxmoxSelection` discriminated union (`{ type: 'datacenter' | 'node' | 'vm' }`) drives what the main panel renders.
+- **Datacenter summary:** fetches `/cluster/status` for cluster name + per-node online state, combined with node/VM lists for stat cards and "All Guests" table.
+- **VM/CT detail:** `GET /nodes/{node}/{type}/{vmid}/config` (qemu or lxc) + `/nodes/{node}/{type}/{vmid}/rrddata` for RRD charts. Config is parsed client-side into network interfaces, disks, and general key/value fields.
+- **Tags:** Proxmox returns tags as semicolon-separated string in the VM list response; split with `.split(';').filter(Boolean)` and rendered as accent chips.
+- **RRD timeframes:** `hour`, `day`, `week`, `month`. X-axis tick format varies: hour = time only, day = date+time, week/month = date only.
+
+---
+
 ## Kubernetes Plugin Notes
 
 - **Kubeconfig:** `kubeconfig_content` (sensitive/textarea) takes priority over `kubeconfig_path`. When content is provided, written to `tempfile.mkstemp` on `on_enable`, cleaned up on `on_disable`.
@@ -544,6 +561,19 @@ ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). Fronte
 
 ---
 
+## Remote Packet Capture Plugin Notes
+
+- **Two modes:** Local (tcpdump on UHLD container) and Remote (tcpdump via SSH on a remote host). Remote is the default.
+- **SSH key handling:** `ssh_key_content` (sensitive/textarea) written to `tempfile.mkstemp` with `chmod 600`, cleaned up in `finally`. `_build_ssh_args()` is a shared helper used by all SSH-capable endpoints.
+- **`_build_tcpdump_cmd(body, for_pcap, for_stream)`** centralizes flag assembly. `-l` added for streaming (line-buffered output). `-w -` added for PCAP binary download.
+- **Streaming:** SSE via `POST /capture/stream`. Two `asyncio.Task` coroutines read stdout/stderr concurrently; a poll loop at 100ms yields new lines as SSE events. Duration timeout kills the process.
+- **PCAP download:** `POST /capture/pcap` uses `_run_binary()` which returns raw `bytes`; SSH pipes binary through cleanly. Returns `application/vnd.tcpdump.pcap` with `Content-Disposition`.
+- **Interface discovery:** `GET /interfaces?remote=true/false` reads `/proc/net/dev` locally or via SSH `cat /proc/net/dev`.
+- **`GET /info`** returns `ssh_host`, `ssh_user`, `ssh_port` (non-sensitive) for the frontend SSH host badge.
+- **Cloudflare analytics 403:** `get_zone_analytics()` catches 403 and returns `analytics_unavailable: True` instead of raising, preventing log spam on every poll when DNS Analytics permission is missing.
+
+---
+
 ## LLM Assistant Plugin Notes
 
 - Provider-aware API handling supports OpenAI, Ollama, Anthropic, OpenWebUI, and custom-compatible endpoints.
@@ -575,11 +605,11 @@ ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). Fronte
 - Docker (containers, images, logs)
 - Kubernetes (nodes, workloads, networking, storage, logs, shell, YAML)
 
-### Sprint 5: Media & Storage (in progress)
-- Plex (implemented), Jellyfin, TrueNAS, Synology
+### Sprint 5: Media & Utility Plugins ✅
+- Plex, Cloudflare, Notifications (email/Telegram/webhook), Asset Inventory, Patch Panel, Remote Packet Capture, Tasks & Incidents
 
-### Sprint 6: Polish
-- Notifications (Telegram, email, webhook)
+### Sprint 6: Polish (in progress)
+- Jellyfin, TrueNAS, Synology
 - Theme polish, accessibility, error handling
 - k8s manifests, GitHub Actions workflow
 

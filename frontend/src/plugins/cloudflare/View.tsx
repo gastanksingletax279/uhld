@@ -533,6 +533,13 @@ export function CloudflareView({ instanceId = 'default' }: { instanceId?: string
                 {selectedZone && <div className="text-xs text-muted">{selectedZone.name}</div>}
               </div>
 
+              {analytics?.analytics_unavailable && (
+                <div className="flex items-center gap-2 text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded px-3 py-2">
+                  <span className="font-medium">Analytics unavailable</span>
+                  <span className="text-yellow-300/70">— add <span className="font-mono">DNS Analytics Read</span> permission to your API token to enable DNS query analytics.</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MetricCard label="Requests" value={analytics?.requests ?? 0} />
                 <MetricCard label="Bandwidth" value={analytics?.bandwidth ?? 0} />
