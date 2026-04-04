@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -15,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from backend.auth import get_current_user
 from backend.models import User
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.plugins.builtin.remote_tcpdump.plugin import RemoteTcpdumpPlugin
@@ -314,8 +317,9 @@ def make_router(plugin: RemoteTcpdumpPlugin) -> APIRouter:
                     "stdout": "\n".join(collected_stdout),
                     "stderr": "\n".join(collected_stderr),
                 })
-            except Exception as exc:
-                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            except Exception:
+                logger.exception("Packet capture stream failed")
+                yield f"data: {json.dumps({'error': 'Capture stream failed'})}\n\n"
                 if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
