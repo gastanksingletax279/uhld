@@ -430,13 +430,24 @@ class UniFiPlugin(PluginBase):
                     # VLAN is stored as native_networkconf_id → look up vlan_id
                     net_id = override.get("native_networkconf_id", "")
                     vlan_id = net_vlan.get(net_id, 0) if net_id else 0
-                    tagged_ids = [t for t in (override.get("tagged_networkconf_ids") or []) if t != "all"]
+                    raw_tagged = override.get("tagged_networkconf_ids") or []
+                    tagged_all = "all" in raw_tagged
+                    op_mode = override.get("op_mode", "")
+                    is_trunk = tagged_all or op_mode == "trunk" or bool(
+                        [t for t in raw_tagged if t != "all"]
+                    )
+                    tagged_ids = [t for t in raw_tagged if t != "all"]
                     tagged_vlans = sorted(
                         v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
                     )
-                    tagged_network_names = [
-                        net_name[tid] for tid in tagged_ids if net_name.get(tid)
-                    ]
+                    if tagged_all:
+                        # Port allows all VLANs — surface all known VLANs with IDs
+                        tagged_vlans = sorted(v for v in net_vlan.values() if v)
+                        tagged_network_names = ["All VLANs"]
+                    else:
+                        tagged_network_names = [
+                            net_name[tid] for tid in tagged_ids if net_name.get(tid)
+                        ]
                     ports.append({
                         "device_id": d["id"],
                         "device_name": device_name,
@@ -453,6 +464,7 @@ class UniFiPlugin(PluginBase):
                         "vlan": vlan_id,
                         "tagged_vlans": tagged_vlans,
                         "tagged_network_names": tagged_network_names,
+                        "is_trunk": is_trunk,
                         "rx_bytes": 0,
                         "tx_bytes": 0,
                         "full_duplex": False,
@@ -493,13 +505,24 @@ class UniFiPlugin(PluginBase):
                 port_name = override.get("name", "")
                 net_id = override.get("native_networkconf_id", "")
                 vlan_id = net_vlan.get(net_id, 0) if net_id else 0
-                tagged_ids = [t for t in (override.get("tagged_networkconf_ids") or []) if t != "all"]
+                raw_tagged = override.get("tagged_networkconf_ids") or []
+                tagged_all = "all" in raw_tagged
+                op_mode = override.get("op_mode", "")
+                is_trunk = tagged_all or op_mode == "trunk" or bool(
+                    [t for t in raw_tagged if t != "all"]
+                )
+                tagged_ids = [t for t in raw_tagged if t != "all"]
                 tagged_vlans = sorted(
                     v for v in (net_vlan.get(tid, 0) for tid in tagged_ids) if v
                 )
-                tagged_network_names = [
-                    net_name[tid] for tid in tagged_ids if net_name.get(tid)
-                ]
+                if tagged_all:
+                    # Port allows all VLANs — surface all known VLANs with IDs
+                    tagged_vlans = sorted(v for v in net_vlan.values() if v)
+                    tagged_network_names = ["All VLANs"]
+                else:
+                    tagged_network_names = [
+                        net_name[tid] for tid in tagged_ids if net_name.get(tid)
+                    ]
                 ports.append({
                     "device_id": device.get("_id", device.get("mac", "")),
                     "device_name": device_name,
@@ -516,6 +539,7 @@ class UniFiPlugin(PluginBase):
                     "vlan": vlan_id,
                     "tagged_vlans": tagged_vlans,
                     "tagged_network_names": tagged_network_names,
+                    "is_trunk": is_trunk,
                     "rx_bytes": int(p.get("rx_bytes", 0)),
                     "tx_bytes": int(p.get("tx_bytes", 0)),
                     "full_duplex": bool(p.get("full_duplex", False)),

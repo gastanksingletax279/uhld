@@ -16,13 +16,14 @@ ENV UHLD_VERSION=${VERSION}
 
 WORKDIR /app
 
-# Install network tools for diagnostics
+# Install network tools for diagnostics + ffmpeg for stream transcoding
 RUN apt-get update \
     && apt-get install -y \
     dnsutils \
+    ffmpeg \
     iputils-ping \
+    openssh-client \
     speedtest-cli \
-    ssh \
     tcpdump \
     traceroute \
     whois \

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import {
   RefreshCw, Film, Database, Activity, Users, Settings,
@@ -48,6 +48,96 @@ interface PlexUser {
   restricted?: boolean
 }
 
+// ── Draggable hook (same pattern as HDHomeRun VideoOverlay) ──────────────────
+
+function useDraggable() {
+  const cardRef = useRef<HTMLDivElement>(null)
+  const drag = useRef({ active: false, startX: 0, startY: 0, baseX: 0, baseY: 0, x: 0, y: 0 })
+
+  function onDragStart(e: React.MouseEvent) {
+    if (e.button !== 0) return
+    if ((e.target as HTMLElement).closest('button,input,a,video')) return
+    drag.current = { ...drag.current, active: true, startX: e.clientX, startY: e.clientY, baseX: drag.current.x, baseY: drag.current.y }
+    document.body.style.cursor = 'grabbing'
+    e.preventDefault()
+  }
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!drag.current.active || !cardRef.current) return
+      drag.current.x = drag.current.baseX + (e.clientX - drag.current.startX)
+      drag.current.y = drag.current.baseY + (e.clientY - drag.current.startY)
+      cardRef.current.style.transform = `translate(calc(-50% + ${drag.current.x}px), calc(-50% + ${drag.current.y}px))`
+    }
+    function onMouseUp() { drag.current.active = false; document.body.style.cursor = '' }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  return { cardRef, onDragStart }
+}
+
+// ── Plex video overlay player ─────────────────────────────────────────────────
+
+interface PlexVideoOverlayProps {
+  playUrl: string
+  title: string
+  subtitle?: string
+  onClose: () => void
+}
+
+function PlexVideoOverlay({ playUrl, title, subtitle, onClose }: PlexVideoOverlayProps) {
+  const { cardRef, onDragStart } = useDraggable()
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70" onClick={onClose}>
+      <div
+        ref={cardRef}
+        className="card p-4 space-y-3 absolute overflow-auto"
+        style={{
+          top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: '80vw', maxWidth: '900px', minWidth: '380px', minHeight: '180px',
+          resize: 'both',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header — drag handle */}
+        <div
+          className="flex items-start justify-between gap-3 cursor-grab active:cursor-grabbing select-none"
+          onMouseDown={onDragStart}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-gray-100 truncate">{title}</div>
+            {subtitle && (
+              <div className="text-xs text-muted truncate mt-0.5">{subtitle}</div>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            title="Close player"
+            className="p-1 rounded hover:bg-surface-3 text-muted hover:text-gray-100 transition-colors flex-shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video
+          src={playUrl}
+          controls
+          autoPlay
+          className="w-full rounded bg-black"
+          style={{ minHeight: '240px' }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export function PlexView({ instanceId = 'default' }: { instanceId?: string }) {
   const plex = api.plex(instanceId)
   const _key = `plex:${instanceId}`
@@ -74,19 +164,21 @@ export function PlexView({ instanceId = 'default' }: { instanceId?: string }) {
   const [selectedLibrary, setSelectedLibrary] = useState<string | null>(null)
   const [libraryItems, setLibraryItems] = useState<any[]>([])
   const [itemsLoading, setItemsLoading] = useState(false)
+  const [openInDashboard, setOpenInDashboard] = useState(false)
 
   async function loadData() {
     setLoading(true)
     setActionError(null)
     
     try {
-      const [sessionsRes, librariesRes, healthRes, usersRes, recentRes, deckRes] = await Promise.allSettled([
+      const [sessionsRes, librariesRes, healthRes, usersRes, recentRes, deckRes, statusRes] = await Promise.allSettled([
         plex.getSessions(),
         plex.getLibraries(),
         plex.getHealth(),
         plex.getUsers(),
         plex.getRecentlyAdded(12),
         plex.getOnDeck(12),
+        plex.getStatus(),
       ])
 
       if (sessionsRes.status === 'fulfilled') {
@@ -124,6 +216,9 @@ export function PlexView({ instanceId = 'default' }: { instanceId?: string }) {
       }
       if (deckRes.status === 'fulfilled') {
         setOnDeck(deckRes.value.items || [])
+      }
+      if (statusRes.status === 'fulfilled') {
+        setOpenInDashboard(Boolean(statusRes.value.open_in_dashboard))
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to load data')
@@ -306,6 +401,7 @@ export function PlexView({ instanceId = 'default' }: { instanceId?: string }) {
               actionLoading={actionLoading}
               imageProxy={imageProxy}
               instanceId={instanceId}
+              openInDashboard={openInDashboard}
             />
           )}
           {tab === 'library' && (
@@ -322,6 +418,7 @@ export function PlexView({ instanceId = 'default' }: { instanceId?: string }) {
               actionLoading={actionLoading}
               imageProxy={imageProxy}
               instanceId={instanceId}
+              openInDashboard={openInDashboard}
             />
           )}
           {tab === 'health' && <HealthTab health={health} />}
@@ -345,6 +442,7 @@ function DashboardTab({
   actionLoading,
   imageProxy,
   instanceId,
+  openInDashboard,
 }: {
   sessions: PlexSession[]
   recentlyAdded: any[]
@@ -356,6 +454,7 @@ function DashboardTab({
   actionLoading: string | null
   imageProxy: (path: string | undefined) => string | undefined
   instanceId: string
+  openInDashboard: boolean
 }) {
   const [selectedItem, setSelectedItem] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
@@ -613,6 +712,7 @@ function DashboardTab({
           onDelete={() => {}}
           imageProxy={imageProxy}
           instanceId={instanceId}
+          openInDashboard={openInDashboard}
         />
       )}
     </div>
@@ -634,6 +734,7 @@ function LibraryTab({
   actionLoading,
   imageProxy,
   instanceId,
+  openInDashboard,
 }: {
   libraries: PlexLibrary[]
   selectedLibrary: string | null
@@ -647,6 +748,7 @@ function LibraryTab({
   actionLoading: string | null
   imageProxy: (path: string | undefined) => string | undefined
   instanceId: string
+  openInDashboard: boolean
 }) {
   const [selectedItem, setSelectedItem] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
@@ -868,6 +970,7 @@ function LibraryTab({
           }}
           imageProxy={imageProxy}
           instanceId={instanceId}
+          openInDashboard={openInDashboard}
         />
       )}
     </div>
@@ -883,6 +986,7 @@ function MediaDetailModal({
   onDelete,
   imageProxy,
   instanceId,
+  openInDashboard,
 }: {
   item: any
   onClose: () => void
@@ -890,6 +994,7 @@ function MediaDetailModal({
   onDelete: () => void
   imageProxy: (path: string | undefined) => string | undefined
   instanceId: string
+  openInDashboard: boolean
 }) {
   const plex = api.plex(instanceId)
   const [view, setView] = useState<'info' | 'seasons' | 'episodes'>(
@@ -900,6 +1005,9 @@ function MediaDetailModal({
   const [selectedSeason, setSelectedSeason] = useState<any>(item.type === 'season' ? item : null)
   const [loading, setLoading] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [overlayUrl, setOverlayUrl] = useState<string | null>(null)
+  const [overlayTitle, setOverlayTitle] = useState<string>('')
+  const [overlaySubtitle, setOverlaySubtitle] = useState<string | undefined>(undefined)
 
   // Load seasons if this is a TV show (and not pre-loaded)
   useEffect(() => {
@@ -926,7 +1034,12 @@ function MediaDetailModal({
       setPlaying(true)
       const res = await plex.playItem(item.ratingKey)
       if (res.play_url) {
-        window.open(res.play_url, '_blank')
+        if (openInDashboard) {
+          setOverlayTitle(item.title)
+          setOverlayUrl(res.play_url)
+        } else {
+          window.open(res.play_url, '_blank')
+        }
       }
     } catch (err) {
       alert('Failed to start playback')
@@ -1105,7 +1218,15 @@ function MediaDetailModal({
                       onClick={async () => {
                         try {
                           const res = await plex.playItem(episode.ratingKey)
-                          if (res.play_url) window.open(res.play_url, '_blank')
+                          if (res.play_url) {
+                            if (openInDashboard) {
+                              setOverlayTitle(episode.title)
+                              setOverlaySubtitle(selectedSeason ? `${item.title} — ${selectedSeason.title}` : item.title)
+                              setOverlayUrl(res.play_url)
+                            } else {
+                              window.open(res.play_url, '_blank')
+                            }
+                          }
                         } catch (err) {
                           alert('Failed to play episode')
                         }
@@ -1215,6 +1336,16 @@ function MediaDetailModal({
           )}
         </div>
       </div>
+
+      {/* Overlay video player — rendered outside the modal scroll container */}
+      {overlayUrl && (
+        <PlexVideoOverlay
+          playUrl={overlayUrl}
+          title={overlayTitle}
+          subtitle={overlaySubtitle}
+          onClose={() => setOverlayUrl(null)}
+        />
+      )}
     </div>
   )
 }

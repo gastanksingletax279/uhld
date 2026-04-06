@@ -320,6 +320,22 @@ class KubernetesPlugin(PluginBase):
                 "etcd_healthy_members": int(etcd.get("healthy_members", 0)),
                 "etcd_total_members": int(etcd.get("total_members", 0)),
             })
+            # Unhealthy pods for widget alert
+            try:
+                unhealthy_pods = [
+                    {
+                        "name": p.metadata.name,
+                        "namespace": p.metadata.namespace,
+                        "phase": p.status.phase or "Unknown",
+                        "reason": (p.status.reason or ""),
+                    }
+                    for p in pods.items
+                    if (p.status.phase or "") not in ("Running", "Succeeded")
+                    and p.metadata.deletion_timestamp is None  # skip terminating pods
+                ][:10]
+            except Exception:
+                unhealthy_pods = []
+            result["unhealthy_pods"] = unhealthy_pods
             self._summary_cache = result
             return result
         except Exception as exc:
@@ -1441,6 +1457,207 @@ class KubernetesPlugin(PluginBase):
             "members": sorted(members, key=lambda m: m["name"]),
         }
 
+    # ── etcd metrics (k3s embedded / kubeadm static pods) ────────────────────
+
+    def _parse_prometheus_text(self, text: str) -> dict[str, float]:
+        """Parse Prometheus text exposition format into a flat {metric_name: value} dict.
+
+        Only parses simple scalar metrics and the last-seen value for histogram _sum/_count
+        lines. Comment lines (# HELP / # TYPE) and empty lines are skipped.
+        """
+        result: dict[str, float] = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                # Split off any timestamp (third token)
+                parts = line.split(" ")
+                if len(parts) < 2:
+                    continue
+                name_labels = parts[0]
+                value_str = parts[1]
+                # Skip NaN / +Inf / -Inf values
+                if value_str in ("NaN", "+Inf", "-Inf"):
+                    continue
+                value = float(value_str)
+                # Strip label set from name  e.g. metric{foo="bar"} → metric
+                brace = name_labels.find("{")
+                if brace != -1:
+                    metric_name = name_labels[:brace]
+                    labels_raw = name_labels[brace + 1 : name_labels.rfind("}")]
+                    # Build a canonical label dict so we can key by quantile for histograms
+                    labels: dict[str, str] = {}
+                    for kv in labels_raw.split(","):
+                        if "=" in kv:
+                            k, v = kv.split("=", 1)
+                            labels[k.strip()] = v.strip().strip('"')
+                    # For histograms we want the p99 quantile
+                    quantile = labels.get("quantile")
+                    if quantile == "0.99":
+                        result[f"{metric_name}_p99"] = value
+                    # Store last seen value for all names (overwritten by later lines)
+                    result[name_labels] = value
+                else:
+                    result[name_labels] = value
+            except (ValueError, IndexError):
+                continue
+        return result
+
+    async def _proxy_pod_http(
+        self,
+        namespace: str,
+        pod_name: str,
+        port: int,
+        path: str,
+    ) -> str:
+        """Fetch an HTTP endpoint from inside a pod via the Kubernetes API server proxy.
+
+        Uses the rest client directly to hit:
+          GET /api/v1/namespaces/{namespace}/pods/{pod_name}:{port}/proxy/{path}
+
+        Returns the response body as a string, or raises on failure.
+
+        NOTE: This route requires the API server to be able to connect to the pod's
+        port.  etcd's metrics port (2381) listens on localhost inside the node and is
+        NOT exposed in the pod spec by default, so this call will usually fail for
+        standard static-pod deployments.  However, for k3s embedded etcd the pods
+        sometimes expose port 2381 in their container spec; the call is always
+        attempted and the caller must handle the exception gracefully.
+        """
+        api_client = self._get_api_client()
+        url = (
+            f"/api/v1/namespaces/{namespace}/pods"
+            f"/{pod_name}:{port}/proxy/{path.lstrip('/')}"
+        )
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: api_client.call_api(
+                url,
+                "GET",
+                auth_settings=["BearerToken"],
+                response_type="str",
+                _preload_content=True,
+                _return_http_data_only=True,
+            ),
+        )
+        return str(response)
+
+    async def _fetch_etcd_metrics(self) -> dict:
+        """Fetch per-member etcd health and Prometheus metrics via the Kubernetes API
+        pod proxy.
+
+        Strategy:
+          1. Re-use _fetch_etcd_status() to discover member pods.
+          2. For each member pod proxy GET :{port}/health  (port 2381 for k3s, 2379
+             for kubeadm — we try 2381 first then 2379).
+          3. If health succeeds, also proxy GET :{port}/metrics and parse the
+             Prometheus text.  If metrics are unreachable (common for kubeadm static
+             pods where the metrics port is bound to localhost on the node and not
+             forwarded through the API server proxy) we return what we have.
+
+        Returns:
+          {
+            "available": bool,
+            "reason": str,          # only when available=False
+            "members": [
+              {
+                "name": str,
+                "health_ok": bool,
+                "health_raw": str,   # raw /health JSON
+                "metrics": {         # None when not reachable
+                  "has_leader": int,
+                  "leader_changes_total": float,
+                  "db_size_bytes": float,
+                  "wal_fsync_p99_seconds": float,
+                  "backend_commit_p99_seconds": float,
+                  "peer_sent_bytes_total": float,
+                }
+              }
+            ]
+          }
+        """
+        import json as _json
+
+        status = await self._fetch_etcd_status()
+        if not status.get("present"):
+            return {
+                "available": False,
+                "reason": status.get("reason", "etcd not present"),
+            }
+
+        v1 = self._core_v1()
+        member_results = []
+
+        for member in status.get("members", []):
+            pod_name = member["name"]
+            namespace = member["namespace"] or "kube-system"
+            mresult: dict = {"name": pod_name, "health_ok": False, "health_raw": None, "metrics": None}
+
+            # Try to reach the health endpoint via pod proxy.
+            # k3s etcd uses port 2381 for metrics/health; kubeadm uses 2379 (client)
+            # and 2381 (metrics).  We try 2381 first as it's more widely available.
+            health_body: str | None = None
+            used_port: int | None = None
+            for port in (2381, 2379):
+                try:
+                    health_body = await self._proxy_pod_http(namespace, pod_name, port, "/health")
+                    used_port = port
+                    break
+                except Exception:
+                    continue
+
+            if health_body is not None:
+                mresult["health_raw"] = health_body
+                try:
+                    parsed = _json.loads(health_body)
+                    mresult["health_ok"] = parsed.get("health") in ("true", True)
+                except Exception:
+                    # Some versions return plain text "true"
+                    mresult["health_ok"] = "true" in health_body.lower()
+
+                # Attempt to fetch Prometheus metrics from the same port
+                if used_port is not None:
+                    try:
+                        metrics_text = await self._proxy_pod_http(
+                            namespace, pod_name, used_port, "/metrics"
+                        )
+                        parsed_metrics = self._parse_prometheus_text(metrics_text)
+                        mresult["metrics"] = {
+                            "has_leader": int(parsed_metrics.get("etcd_server_has_leader", -1)),
+                            "leader_changes_total": parsed_metrics.get("etcd_server_leader_changes_seen_total", 0.0),
+                            "db_size_bytes": parsed_metrics.get("etcd_mvcc_db_total_size_in_bytes", 0.0),
+                            "wal_fsync_p99_seconds": parsed_metrics.get("etcd_disk_wal_fsync_duration_seconds_p99", 0.0),
+                            "backend_commit_p99_seconds": parsed_metrics.get("etcd_disk_backend_commit_duration_seconds_p99", 0.0),
+                            "peer_sent_bytes_total": parsed_metrics.get("etcd_network_peer_sent_bytes_total", 0.0),
+                        }
+                    except Exception:
+                        # Metrics endpoint unreachable — not a fatal error
+                        pass
+            else:
+                # Pod proxy unreachable: the metrics/health ports are likely bound to
+                # the node's loopback interface and are not forwarded through the API
+                # server proxy.  This is expected on standard kubeadm clusters and on
+                # k3s clusters where the UHLD container is not running on the same
+                # network as the k8s nodes.
+                mresult["proxy_unavailable"] = True
+
+            member_results.append(mresult)
+
+        any_health = any(m.get("health_ok") for m in member_results)
+        any_metrics = any(m.get("metrics") is not None for m in member_results)
+        proxy_unavailable = all(m.get("proxy_unavailable") for m in member_results)
+
+        return {
+            "available": True,
+            "proxy_accessible": not proxy_unavailable,
+            "any_health_data": any_health or not proxy_unavailable,
+            "any_metrics_data": any_metrics,
+            "mode": status.get("mode", "unknown"),
+            "members": member_results,
+        }
+
     # ── Networking extras ─────────────────────────────────────────────────────
 
     def _custom_objects(self):
@@ -2248,6 +2465,197 @@ class KubernetesPlugin(PluginBase):
             stop_event.set()
             recv_task.cancel()
             executor.shutdown(wait=False)
+
+    async def _fetch_deployment_detail(self, namespace: str, name: str) -> dict:
+        """Fetch full detail for a single deployment."""
+        apps = self._apps_v1()
+        v1 = self._core_v1()
+        d = await self._run(apps.read_namespaced_deployment, name, namespace)
+        api_client = self._get_api_client()
+        raw = api_client.sanitize_for_serialization(d)
+
+        spec = d.spec or {}
+        status = d.status or {}
+
+        # Strategy
+        strategy: dict = {}
+        if d.spec and d.spec.strategy:
+            strat = d.spec.strategy
+            strategy["type"] = strat.type or "RollingUpdate"
+            if strat.rolling_update:
+                ru = strat.rolling_update
+                strategy["max_surge"] = str(ru.max_surge) if ru.max_surge is not None else None
+                strategy["max_unavailable"] = str(ru.max_unavailable) if ru.max_unavailable is not None else None
+        else:
+            strategy["type"] = "RollingUpdate"
+
+        # Selector labels
+        selector: dict[str, str] = {}
+        if d.spec and d.spec.selector and d.spec.selector.match_labels:
+            selector = dict(d.spec.selector.match_labels)
+
+        # Conditions
+        conditions = [
+            {
+                "type": c.type or "",
+                "status": c.status or "",
+                "reason": c.reason or "",
+                "message": c.message or "",
+                "last_update": _ts(c.last_update_time),
+            }
+            for c in (status.conditions or [])
+        ]
+
+        # Pod template containers
+        pod_template_containers = []
+        if d.spec and d.spec.template and d.spec.template.spec:
+            for c in (d.spec.template.spec.containers or []):
+                res = c.resources or {}
+
+                def _qty(d_inner) -> dict:
+                    if not d_inner:
+                        return {}
+                    return {k: str(v) for k, v in (d_inner.items() if hasattr(d_inner, "items") else {})}
+
+                pod_template_containers.append({
+                    "name": c.name,
+                    "image": c.image or "",
+                    "resources": {
+                        "requests": _qty(getattr(res, "requests", None)),
+                        "limits": _qty(getattr(res, "limits", None)),
+                    },
+                    "ports": [
+                        {"name": pp.name or "", "container_port": pp.container_port, "protocol": pp.protocol or "TCP"}
+                        for pp in (c.ports or [])
+                    ],
+                    "env_count": len(c.env or []),
+                })
+
+        # Events
+        try:
+            evts = await self._run(
+                v1.list_namespaced_event, namespace,
+                field_selector=f"involvedObject.name={name},involvedObject.kind=Deployment",
+            )
+            events = sorted(
+                [
+                    {
+                        "type": e.type or "",
+                        "reason": e.reason or "",
+                        "message": e.message or "",
+                        "count": e.count or 1,
+                        "last_time": _ts(e.last_timestamp),
+                    }
+                    for e in evts.items
+                ],
+                key=lambda x: x["last_time"],
+                reverse=True,
+            )[:5]
+        except Exception:
+            events = []
+
+        return {
+            "name": d.metadata.name,
+            "namespace": d.metadata.namespace,
+            "created": _ts(d.metadata.creation_timestamp),
+            "desired": (d.spec.replicas or 0) if d.spec else 0,
+            "ready": status.ready_replicas or 0,
+            "available": status.available_replicas or 0,
+            "up_to_date": status.updated_replicas or 0,
+            "strategy": strategy,
+            "selector": selector,
+            "conditions": conditions,
+            "pod_template_containers": pod_template_containers,
+            "events": events,
+            "labels": dict(d.metadata.labels or {}),
+            "annotations": {
+                k: v
+                for k, v in (d.metadata.annotations or {}).items()
+                if not k.startswith("kubectl.kubernetes.io/last-applied")
+            },
+        }
+
+    async def _fetch_node_detail(self, name: str) -> dict:
+        """Fetch full detail for a single node, including pods scheduled on it."""
+        v1 = self._core_v1()
+        node, pods_resp = await asyncio.gather(
+            self._run(v1.read_node, name),
+            self._run(v1.list_pod_for_all_namespaces, field_selector=f"spec.nodeName={name}"),
+        )
+
+        conditions = [
+            {
+                "type": c.type or "",
+                "status": c.status or "",
+                "reason": c.reason or "",
+                "message": c.message or "",
+            }
+            for c in (node.status.conditions or [])
+        ]
+
+        addresses = [
+            {"type": a.type or "", "address": a.address or ""}
+            for a in (node.status.addresses or [])
+        ]
+
+        info = node.status.node_info if node.status and node.status.node_info else None
+
+        _role_prefix = "node-role.kubernetes.io/"
+        roles = sorted(
+            k[len(_role_prefix):]
+            for k in (node.metadata.labels or {})
+            if k.startswith(_role_prefix)
+        ) or ["worker"]
+
+        ready = any(c.type == "Ready" and c.status == "True" for c in (node.status.conditions or []))
+
+        # Capacity / allocatable
+        capacity = {}
+        allocatable = {}
+        if node.status.capacity:
+            capacity = {k: str(v) for k, v in (node.status.capacity.items() if hasattr(node.status.capacity, "items") else {}) }
+        if node.status.allocatable:
+            allocatable = {k: str(v) for k, v in (node.status.allocatable.items() if hasattr(node.status.allocatable, "items") else {})}
+
+        # Pods on this node
+        pods_on_node = [
+            {
+                "name": p.metadata.name,
+                "namespace": p.metadata.namespace,
+                "status": p.status.phase or "Unknown",
+                "ready": f"{sum(1 for s in (p.status.container_statuses or []) if s.ready)}/{len(p.spec.containers or [])}",
+                "created": _ts(p.metadata.creation_timestamp),
+            }
+            for p in pods_resp.items
+            if p.metadata.deletion_timestamp is None
+        ]
+
+        return {
+            "name": node.metadata.name,
+            "status": "Ready" if ready else "NotReady",
+            "roles": roles,
+            "created": _ts(node.metadata.creation_timestamp),
+            "labels": dict(node.metadata.labels or {}),
+            "annotations": {
+                k: v
+                for k, v in (node.metadata.annotations or {}).items()
+                if not k.startswith("kubectl.kubernetes.io/last-applied")
+            },
+            "conditions": conditions,
+            "addresses": addresses,
+            "node_info": {
+                "os_image": info.os_image if info else "",
+                "kernel_version": info.kernel_version if info else "",
+                "container_runtime": info.container_runtime_version if info else "",
+                "kubelet_version": info.kubelet_version if info else "",
+                "architecture": info.architecture if info else "",
+                "operating_system": info.operating_system if info else "",
+            },
+            "capacity": capacity,
+            "allocatable": allocatable,
+            "unschedulable": bool(node.spec.unschedulable) if node.spec else False,
+            "pods": pods_on_node,
+        }
 
     def get_router(self) -> APIRouter:
         from backend.plugins.builtin.kubernetes.api import make_router

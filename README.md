@@ -55,6 +55,8 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 | Patch Panel plugin (port/device/switch mapping) | ✅ Complete |
 | Remote Packet Capture (tcpdump local or SSH, live stream, PCAP download) | ✅ Complete |
 | Tasks & Incidents plugin (infrastructure task queue) | ✅ Complete |
+| HDHomeRun plugin (live TV, multi-stream grid, PiP, signal monitoring) | ✅ Complete |
+| UPS / NUT plugin (battery %, load, runtime, power events, notifications) | ✅ Complete |
 | Jellyfin / TrueNAS / Synology | Planned |
 
 ---

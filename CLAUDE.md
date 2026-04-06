@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UHLD is a self-hosted, plugin-driven homelab management dashboard. Think Home Assistant, but for infrastructure. Deploy as a Docker container, enable plugins for services you run, and get a unified dashboard for your entire homelab.
 
-**Project status:** Sprints 1–5 complete. Implemented: core framework, Proxmox, network/DNS plugins, container plugins, media/network utility plugins (Plex, Cloudflare, Notifications, Asset Inventory, Patch Panel, Remote Packet Capture, Tasks & Incidents). See `TODO.md` for the active backlog.
+**Project status:** Sprints 1–6 in progress. Implemented: core framework, Proxmox, network/DNS plugins, container plugins, media/network utility plugins (Plex, Cloudflare, Notifications, Asset Inventory, Patch Panel, Remote Packet Capture, Tasks & Incidents, HDHomeRun, UPS/NUT). See `TODO.md` for the active backlog.
 
 ---
 
@@ -398,12 +398,14 @@ See `k8s/deployment.yaml` — Deployment + ClusterIP Service + PVC + Secret refs
 | **Patch Panel** | Network | None | Track patch panel ports, linked devices, and switch mappings |
 | **Remote Packet Capture** | Network | None / SSH key | tcpdump local or SSH; live SSE streaming, PCAP download, 36 presets, output flags (-A/-X/-v/-e), MAC filter, duration-based capture, interface discovery |
 | **Tasks & Incidents** | Automation | None | Built-in queue for infrastructure tasks, incidents, and requests |
+| **HDHomeRun** | Media | None | Live TV streaming (single-channel + multi-stream grid), EPG guide, signal monitoring, PiP, stats overlay |
+| **UPS / NUT** | Power | NUT credentials | Battery %, load, runtime, power event notifications via Notifications plugin |
 
 ### Planned Plugins
 
 - Jellyfin, TrueNAS, Synology
 - Grafana, Netdata, Uptime Kuma
-- UPS/NUT, IPMI/BMC
+- IPMI/BMC
 - Radarr, Sonarr, Bazarr, Lidarr, Readarr, Jellyseerr
 - Home Assistant, Homebridge
 
@@ -608,9 +610,10 @@ ACL endpoint returns/accepts HuJSON (`Content-Type: application/hujson`). Fronte
 ### Sprint 5: Media & Utility Plugins ✅
 - Plex, Cloudflare, Notifications (email/Telegram/webhook), Asset Inventory, Patch Panel, Remote Packet Capture, Tasks & Incidents
 
-### Sprint 6: Polish (in progress)
-- Jellyfin, TrueNAS, Synology
-- Theme polish, accessibility, error handling
+### Sprint 6: More Plugins + Polish (in progress) ✅
+- HDHomeRun (live TV, multi-stream grid, PiP, signal monitoring, stats overlay)
+- UPS/NUT (battery monitoring, power events, notifications integration)
+- Dashboard sort controls, settings sensitive field toggle, Kubernetes resource detail
 - k8s manifests, GitHub Actions workflow
 
 ---

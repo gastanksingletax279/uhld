@@ -13,8 +13,8 @@ import {
   K8sCRD, K8sResourceQuota, K8sLimitRange, K8sPriorityClass, K8sPDB,
   K8sMetalLBOverview, K8sMetalLBIPAddressPool, K8sMetalLBL2Advertisement,
   K8sMetalLBBGPAdvertisement, K8sMetalLBBGPPeer, K8sMetalLBBFDProfile,
-  K8sMetalLBCommunity, K8sEtcdStatus,
-  K8sPodDetail,
+  K8sMetalLBCommunity, K8sEtcdStatus, K8sEtcdMetrics,
+  K8sPodDetail, K8sDeploymentDetail, K8sNodeDetail,
 } from '../../api/client'
 import { getViewState, setViewState } from '../../store/viewStateStore'
 import {
@@ -22,8 +22,9 @@ import {
   RotateCcw, ScrollText, X, ChevronUp, ChevronDown, ChevronsUpDown,
   Plus, Minus, Terminal, FileCode, Check, ShieldCheck, Eye, EyeOff,
   LayoutDashboard, Trash2, Package, UserCog,
-  Lock, Unlock, LogOut, Info,
+  Lock, Unlock, LogOut, Info, AlertTriangle,
 } from 'lucide-react'
+import { ResourceDetailModal, DetailableResource } from './ResourceDetail'
 
 // ── Tab/Group types ────────────────────────────────────────────────────────
 
@@ -116,6 +117,12 @@ type ConfirmModal = { title: string; message: string; items?: string[]; confirmL
 // ── Pod detail modal ───────────────────────────────────────────────────────
 type PodDetailModalState = { pod: K8sPod; detail: K8sPodDetail | null; loading: boolean; error: string | null }
 
+// ── Deployment detail modal ────────────────────────────────────────────────
+type DeploymentDetailModalState = { deployment: K8sDeployment; detail: K8sDeploymentDetail | null; loading: boolean; error: string | null }
+
+// ── Node detail modal ──────────────────────────────────────────────────────
+type NodeDetailModalState = { node: K8sNode; detail: K8sNodeDetail | null; loading: boolean; error: string | null }
+
 // ── Secret data modal ──────────────────────────────────────────────────────
 type SecretDataModal = {
   namespace: string; name: string; type: string
@@ -196,10 +203,17 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [etcdStatus, setEtcdStatus] = useState<{ data: K8sEtcdStatus | null; loading: boolean; loaded: boolean; error: string | null }>(
     { data: null, loading: false, loaded: false, error: null }
   )
+  const [etcdMetrics, setEtcdMetrics] = useState<{ data: K8sEtcdMetrics | null; loading: boolean; loaded: boolean; error: string | null }>(
+    { data: null, loading: false, loaded: false, error: null }
+  )
   const [selectedPods,  setSelectedPods]  = useState<Set<string>>(new Set())
 
   const [actionLoading,   setActionLoading]   = useState<string | null>(null)
   const [actionError,     setActionError]     = useState<string | null>(null)
+
+  // Generic resource detail modal (used for all resource types not covered by Pod/Deployment/Node modals)
+  const [resourceDetail,  setResourceDetail]  = useState<{ item: DetailableResource; yaml: string; yamlLoading: boolean; yamlError: string | null } | null>(null)
+
   const [logsModal,       setLogsModal]       = useState<LogsModal | null>(null)
   const [logsTail,        setLogsTail]        = useState(false)
   const logsWsRef       = useRef<WebSocket | null>(null)
@@ -209,8 +223,10 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
   const [shellModal,      setShellModal]      = useState<ShellModal | null>(null)
   const [yamlModal,       setYamlModal]       = useState<YamlModal | null>(null)
   const [secretDataModal, setSecretDataModal] = useState<SecretDataModal | null>(null)
-  const [confirmModal,    setConfirmModal]    = useState<ConfirmModal | null>(null)
-  const [podDetailModal,  setPodDetailModal]  = useState<PodDetailModalState | null>(null)
+  const [confirmModal,         setConfirmModal]         = useState<ConfirmModal | null>(null)
+  const [podDetailModal,       setPodDetailModal]       = useState<PodDetailModalState | null>(null)
+  const [deploymentDetailModal,setDeploymentDetailModal]= useState<DeploymentDetailModalState | null>(null)
+  const [nodeDetailModal,      setNodeDetailModal]      = useState<NodeDetailModalState | null>(null)
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   async function load<T>(setter: React.Dispatch<React.SetStateAction<TabState<T>>>, fetcher: () => Promise<unknown>, key: string) {
@@ -289,6 +305,11 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
           k8s.etcdStatus().then((data) => setEtcdStatus({ data, loading: false, loaded: true, error: null }))
             .catch((e: unknown) => setEtcdStatus((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : 'Failed' })))
         }
+        if (!skip(etcdMetrics)) {
+          setEtcdMetrics((s) => ({ ...s, loading: true, error: null }))
+          k8s.etcdMetrics().then((data) => setEtcdMetrics({ data, loading: false, loaded: true, error: null }))
+            .catch((e: unknown) => setEtcdMetrics((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : 'Failed' })))
+        }
         break
     }
   }, [nsFilter])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -313,6 +334,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     setMetallbPools(emptyTab()); setMetallbL2Ads(emptyTab()); setMetallbBGPAds(emptyTab())
     setMetallbBGPPeers(emptyTab()); setMetallbBFDProfiles(emptyTab()); setMetallbCommunities(emptyTab())
     setEtcdStatus({ data: null, loading: false, loaded: false, error: null })
+    setEtcdMetrics({ data: null, loading: false, loaded: false, error: null })
     setSelectedPods(new Set())
     loadTab(tab)
   }, [instanceId])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -533,6 +555,36 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
     }
   }
 
+  async function openDeploymentDetail(deployment: K8sDeployment) {
+    setDeploymentDetailModal({ deployment, detail: null, loading: true, error: null })
+    try {
+      const detail = await k8s.deploymentDetail(deployment.namespace, deployment.name)
+      setDeploymentDetailModal((m) => m ? { ...m, detail, loading: false } : null)
+    } catch (e: unknown) {
+      setDeploymentDetailModal((m) => m ? { ...m, loading: false, error: e instanceof Error ? e.message : 'Failed to load deployment details' } : null)
+    }
+  }
+
+  async function openNodeDetail(node: K8sNode) {
+    setNodeDetailModal({ node, detail: null, loading: true, error: null })
+    try {
+      const detail = await k8s.nodeDetail(node.name)
+      setNodeDetailModal((m) => m ? { ...m, detail, loading: false } : null)
+    } catch (e: unknown) {
+      setNodeDetailModal((m) => m ? { ...m, loading: false, error: e instanceof Error ? e.message : 'Failed to load node details' } : null)
+    }
+  }
+
+  async function openResourceDetail(item: DetailableResource, yamlKind: string, name: string, namespace = '') {
+    setResourceDetail({ item, yaml: '', yamlLoading: true, yamlError: null })
+    try {
+      const { yaml } = await k8s.getYaml(yamlKind, name, namespace)
+      setResourceDetail((m) => m ? { ...m, yaml, yamlLoading: false } : null)
+    } catch (e: unknown) {
+      setResourceDetail((m) => m ? { ...m, yamlLoading: false, yamlError: e instanceof Error ? e.message : 'Failed to load YAML' } : null)
+    }
+  }
+
   async function cordonNode(name: string) {
     setActionLoading(`cordon:${name}`); setActionError(null)
     try {
@@ -728,41 +780,41 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {actionError && <ErrorBanner msg={actionError} />}
 
       {/* Content */}
-      {tab === 'overview'      && <OverviewPanel      state={overview} onRefresh={() => { setOverview(emptyOverview()); loadTab('overview', '', true) }} />}
-      {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} onCordon={cordonNode} onUncordon={uncordonNode} onDrain={promptDrainNode} onDelete={promptDeleteNode} actionLoading={actionLoading} />}
+      {tab === 'overview'      && <OverviewPanel      state={overview} onRefresh={() => { setOverview(emptyOverview()); loadTab('overview', '', true) }} onNodeClick={(name) => { const node = nodes.data.find((n) => n.name === name); if (node) openNodeDetail(node); else { loadTab('nodes', '', false); k8s.nodes().then((res) => { const found = (res as { nodes: K8sNode[] }).nodes?.find((n) => n.name === name); if (found) openNodeDetail(found) }).catch(() => {}) } }} />}
+      {tab === 'nodes'         && <NodesTable         state={nodes}         onYaml={(n) => openYaml('namespace', n.name, '')} onCordon={cordonNode} onUncordon={uncordonNode} onDrain={promptDrainNode} onDelete={promptDeleteNode} actionLoading={actionLoading} onDetail={openNodeDetail} />}
       {tab === 'namespaces'    && <NamespacesTable    state={namespaces}    actionLoading={actionLoading} onDelete={promptDeleteNamespace} />}
       {tab === 'crds'          && <CRDsTable          state={crds} />}
       {tab === 'pods'          && <PodsTable          state={pods}          actionLoading={actionLoading} onRestart={restartPod} onLogs={openLogs} onShell={openShell} onYaml={(p) => openYaml('pod', p.name, p.namespace)} onDetail={openPodDetail} selected={selectedPods} onSelect={setSelectedPods} onBulkRestart={bulkRestartPods} />}
-      {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onRestart={(d) => restartWorkload('deployment', d.namespace, d.name)} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} />}
-      {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  actionLoading={actionLoading} onRestart={(s) => restartWorkload('statefulset', s.namespace, s.name)} onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} />}
-      {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    actionLoading={actionLoading} onRestart={(d) => restartWorkload('daemonset', d.namespace, d.name)} onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} />}
-      {tab === 'jobs'          && <JobsTable          state={jobs}          />}
-      {tab === 'cronjobs'      && <CronJobsTable      state={cronjobs}      />}
-      {tab === 'replicasets'   && <ReplicaSetsTable   state={replicaSets}   />}
+      {tab === 'deployments'   && <DeploymentsTable   state={deployments}   actionLoading={actionLoading} onScale={scaleDeployment} onRestart={(d) => restartWorkload('deployment', d.namespace, d.name)} onYaml={(d) => openYaml('deployment', d.name, d.namespace)} onDetail={openDeploymentDetail} />}
+      {tab === 'statefulsets'  && <StatefulSetsTable  state={statefulsets}  actionLoading={actionLoading} onRestart={(s) => restartWorkload('statefulset', s.namespace, s.name)} onYaml={(s) => openYaml('statefulset', s.name, s.namespace)} onDetail={(s) => openResourceDetail({ kind: 'StatefulSet', resource: s }, 'statefulset', s.name, s.namespace)} />}
+      {tab === 'daemonsets'    && <DaemonSetsTable    state={daemonsets}    actionLoading={actionLoading} onRestart={(d) => restartWorkload('daemonset', d.namespace, d.name)} onYaml={(d) => openYaml('daemonset', d.name, d.namespace)} onDetail={(d) => openResourceDetail({ kind: 'DaemonSet', resource: d }, 'daemonset', d.name, d.namespace)} />}
+      {tab === 'jobs'          && <JobsTable          state={jobs}          onDetail={(j) => openResourceDetail({ kind: 'Job', resource: j }, 'job', j.name, j.namespace)} />}
+      {tab === 'cronjobs'      && <CronJobsTable      state={cronjobs}      onDetail={(cj) => openResourceDetail({ kind: 'CronJob', resource: cj }, 'cronjob', cj.name, cj.namespace)} />}
+      {tab === 'replicasets'   && <ReplicaSetsTable   state={replicaSets}   onDetail={(rs) => openResourceDetail({ kind: 'ReplicaSet', resource: rs }, 'replicaset', rs.name, rs.namespace)} />}
       {tab === 'hpas'          && <HPAsTable          state={hpas}          />}
-      {tab === 'services'      && <ServicesTable      state={services}      onYaml={(s) => openYaml('service', s.name, s.namespace)} />}
-      {tab === 'ingresses'     && <IngressesTable     state={ingresses}     onYaml={(i) => openYaml('ingress', i.name, i.namespace)} />}
-      {tab === 'ingressclasses'&& <IngressClassesTable state={ingressclasses} />}
-      {tab === 'httproutes'    && <HTTPRoutesTable    state={httproutes}    />}
-      {tab === 'endpoints'     && <EndpointsTable     state={endpoints}     />}
-      {tab === 'networkpolicies'&& <NetworkPoliciesTable state={netPolicies} />}
-      {tab === 'pvs'           && <PVsTable           state={pvs}           onYaml={(v) => openYaml('persistentvolume', v.name, '')} />}
-      {tab === 'pvcs'          && <PVCsTable          state={pvcs}          onYaml={(v) => openYaml('persistentvolumeclaim', v.name, v.namespace)} />}
-      {tab === 'configmaps'    && <ConfigMapsTable    state={configmaps}    onYaml={(c) => openYaml('configmap', c.name, c.namespace)} />}
-      {tab === 'secrets'       && <SecretsTable       state={secrets}       onYaml={(s) => openYaml('secret', s.name, s.namespace)} onReveal={(s) => openSecretData(s.namespace, s.name)} />}
-      {tab === 'certificates'  && <CertificatesTable  state={certificates}  />}
-      {tab === 'storageclasses'&& <StorageClassesTable state={storageClasses} />}
+      {tab === 'services'      && <ServicesTable      state={services}      onYaml={(s) => openYaml('service', s.name, s.namespace)} onDetail={(s) => openResourceDetail({ kind: 'Service', resource: s }, 'service', s.name, s.namespace)} />}
+      {tab === 'ingresses'     && <IngressesTable     state={ingresses}     onYaml={(i) => openYaml('ingress', i.name, i.namespace)} onDetail={(i) => openResourceDetail({ kind: 'Ingress', resource: i }, 'ingress', i.name, i.namespace)} />}
+      {tab === 'ingressclasses'&& <IngressClassesTable state={ingressclasses} onDetail={(ic) => openResourceDetail({ kind: 'IngressClass', resource: ic }, 'ingressclass', ic.name, '')} />}
+      {tab === 'httproutes'    && <HTTPRoutesTable    state={httproutes}    onDetail={(r) => openResourceDetail({ kind: 'HTTPRoute', resource: r }, 'httproute', r.name, r.namespace)} />}
+      {tab === 'endpoints'     && <EndpointsTable     state={endpoints}     onDetail={(ep) => openResourceDetail({ kind: 'Endpoints', resource: ep }, 'endpoints', ep.name, ep.namespace)} />}
+      {tab === 'networkpolicies'&& <NetworkPoliciesTable state={netPolicies} onDetail={(np) => openResourceDetail({ kind: 'NetworkPolicy', resource: np }, 'networkpolicy', np.name, np.namespace)} />}
+      {tab === 'pvs'           && <PVsTable           state={pvs}           onYaml={(v) => openYaml('persistentvolume', v.name, '')} onDetail={(v) => openResourceDetail({ kind: 'PersistentVolume', resource: v }, 'persistentvolume', v.name, '')} />}
+      {tab === 'pvcs'          && <PVCsTable          state={pvcs}          onYaml={(v) => openYaml('persistentvolumeclaim', v.name, v.namespace)} onDetail={(v) => openResourceDetail({ kind: 'PersistentVolumeClaim', resource: v }, 'persistentvolumeclaim', v.name, v.namespace)} />}
+      {tab === 'configmaps'    && <ConfigMapsTable    state={configmaps}    onYaml={(c) => openYaml('configmap', c.name, c.namespace)} onDetail={(c) => openResourceDetail({ kind: 'ConfigMap', resource: c }, 'configmap', c.name, c.namespace)} />}
+      {tab === 'secrets'       && <SecretsTable       state={secrets}       onYaml={(s) => openYaml('secret', s.name, s.namespace)} onReveal={(s) => openSecretData(s.namespace, s.name)} onDetail={(s) => openResourceDetail({ kind: 'Secret', resource: s }, 'secret', s.name, s.namespace)} />}
+      {tab === 'certificates'  && <CertificatesTable  state={certificates}  onDetail={(c) => openResourceDetail({ kind: 'Certificate', resource: c }, 'certificate', c.name, c.namespace)} />}
+      {tab === 'storageclasses'&& <StorageClassesTable state={storageClasses} onDetail={(sc) => openResourceDetail({ kind: 'StorageClass', resource: sc }, 'storageclass', sc.name, '')} />}
       {/* Config */}
       {tab === 'resourcequotas'&& <ResourceQuotasTable state={resourceQuotas} />}
       {tab === 'limitranges'   && <LimitRangesTable   state={limitRanges}   />}
       {tab === 'priorityclasses'&& <PriorityClassesTable state={priorityClasses} />}
       {tab === 'pdbs'          && <PDBsTable          state={pdbs}          />}
       {/* Access control */}
-      {tab === 'serviceaccounts'      && <ServiceAccountsTable  state={svcAccounts}  />}
-      {tab === 'roles'                && <RolesTable             state={roles}        />}
-      {tab === 'clusterroles'         && <ClusterRolesTable      state={clusterRoles} />}
-      {tab === 'rolebindings'         && <RoleBindingsTable      state={roleBindings} />}
-      {tab === 'clusterrolebindings'  && <ClusterRoleBindingsTable state={crBindings} />}
+      {tab === 'serviceaccounts'      && <ServiceAccountsTable  state={svcAccounts}  onDetail={(sa) => openResourceDetail({ kind: 'ServiceAccount', resource: sa }, 'serviceaccount', sa.name, sa.namespace)} />}
+      {tab === 'roles'                && <RolesTable             state={roles}        onDetail={(r) => openResourceDetail({ kind: 'Role', resource: r }, 'role', r.name, r.namespace)} />}
+      {tab === 'clusterroles'         && <ClusterRolesTable      state={clusterRoles} onDetail={(cr) => openResourceDetail({ kind: 'ClusterRole', resource: cr }, 'clusterrole', cr.name, '')} />}
+      {tab === 'rolebindings'         && <RoleBindingsTable      state={roleBindings} onDetail={(rb) => openResourceDetail({ kind: 'RoleBinding', resource: rb }, 'rolebinding', rb.name, rb.namespace)} />}
+      {tab === 'clusterrolebindings'  && <ClusterRoleBindingsTable state={crBindings} onDetail={(crb) => openResourceDetail({ kind: 'ClusterRoleBinding', resource: crb }, 'clusterrolebinding', crb.name, '')} />}
       {/* MetalLB */}
       {tab === 'metallboverview'      && <MetalLBOverviewPanel state={metallbOverview} onRefresh={() => { setMetallbOverview({ data: null, loading: false, loaded: false, error: null }); loadTab('metallboverview', '', true) }} />}
       {tab === 'metallbippools'       && <MetalLBIPAddressPoolsTable state={metallbPools} onYaml={(p) => openYaml('ipaddresspool', p.name, p.namespace)} />}
@@ -772,7 +824,7 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
       {tab === 'metallbbfdprofiles'   && <MetalLBBFDProfilesTable state={metallbBFDProfiles} onYaml={(p) => openYaml('bfdprofile', p.name, p.namespace)} />}
       {tab === 'metallbcommunities'   && <MetalLBCommunitiesTable state={metallbCommunities} onYaml={(c) => openYaml('community', c.name, c.namespace)} />}
       {/* etcd */}
-      {tab === 'etcd'                 && <EtcdStatusPanel state={etcdStatus} onRefresh={() => { setEtcdStatus({ data: null, loading: false, loaded: false, error: null }); loadTab('etcd', '', true) }} />}
+      {tab === 'etcd'                 && <EtcdStatusPanel state={etcdStatus} metricsState={etcdMetrics} onRefresh={() => { setEtcdStatus({ data: null, loading: false, loaded: false, error: null }); setEtcdMetrics({ data: null, loading: false, loaded: false, error: null }); loadTab('etcd', '', true) }} />}
       {/* Helm */}
       {tab === 'helmreleases'         && <HelmReleasesTable      state={helmReleases} />}
       {tab === 'longhorn'      && (
@@ -780,6 +832,8 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
           volumes={lhVolumes} nodes={lhNodes}
           subTab={lhSubTab} onSubTab={setLhSubTab}
           onRefresh={() => { loadTab('longhorn', '', true) }}
+          onDetailVolume={(v) => openResourceDetail({ kind: 'LonghornVolume', resource: v }, 'longhornvolume', v.name, v.namespace)}
+          onDetailNode={(n) => openResourceDetail({ kind: 'LonghornNode', resource: n }, 'longhornnode', n.name, '')}
         />
       )}
 
@@ -913,6 +967,39 @@ export function KubernetesView({ instanceId = 'default' }: { instanceId?: string
           loading={podDetailModal.loading}
           error={podDetailModal.error}
           onClose={() => setPodDetailModal(null)}
+        />
+      )}
+
+      {/* Deployment detail modal */}
+      {deploymentDetailModal && (
+        <DeploymentDetailModal
+          deployment={deploymentDetailModal.deployment}
+          detail={deploymentDetailModal.detail}
+          loading={deploymentDetailModal.loading}
+          error={deploymentDetailModal.error}
+          onClose={() => setDeploymentDetailModal(null)}
+        />
+      )}
+
+      {/* Node detail modal */}
+      {nodeDetailModal && (
+        <NodeDetailModal
+          node={nodeDetailModal.node}
+          detail={nodeDetailModal.detail}
+          loading={nodeDetailModal.loading}
+          error={nodeDetailModal.error}
+          onClose={() => setNodeDetailModal(null)}
+        />
+      )}
+
+      {/* Generic resource detail modal */}
+      {resourceDetail && (
+        <ResourceDetailModal
+          item={resourceDetail.item}
+          yaml={resourceDetail.yaml}
+          yamlLoading={resourceDetail.yamlLoading}
+          yamlError={resourceDetail.yamlError}
+          onClose={() => setResourceDetail(null)}
         />
       )}
     </div>
@@ -1115,6 +1202,434 @@ function PodEventsTab({ detail }: { detail: K8sPodDetail }) {
   )
 }
 
+// ── Deployment Detail Modal ────────────────────────────────────────────────
+
+type DeploymentDetailTab = 'overview' | 'containers' | 'events'
+
+function DeploymentDetailModal({ deployment, detail, loading, error, onClose }: {
+  deployment: K8sDeployment; detail: K8sDeploymentDetail | null; loading: boolean; error: string | null; onClose: () => void
+}) {
+  const [tab, setTab] = useState<DeploymentDetailTab>('overview')
+  return (
+    <Modal title={deployment.name} subtitle={deployment.namespace} icon={<Info className="w-4 h-4 text-muted" />} onClose={onClose} wide>
+      {loading ? <ModalLoading label="Loading deployment details…" /> :
+       error   ? <ErrorBanner msg={error} /> :
+       detail  ? (
+        <div className="flex flex-col" style={{ minHeight: 0 }}>
+          <div className="flex gap-1 border-b border-surface-4 px-1 pt-1 flex-shrink-0">
+            {(['overview', 'containers', 'events'] as DeploymentDetailTab[]).map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-3 py-2 text-xs font-medium capitalize border-b-2 -mb-px transition-colors ${tab === t ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-gray-300'}`}>
+                {t}
+                {t === 'containers' && detail.pod_template_containers.length > 0 && (
+                  <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.pod_template_containers.length}</span>
+                )}
+                {t === 'events' && detail.events.length > 0 && (
+                  <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.events.length}</span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="overflow-y-auto p-4">
+            {tab === 'overview'    && <DeploymentOverviewTab    detail={detail} />}
+            {tab === 'containers'  && <DeploymentContainersTab  detail={detail} />}
+            {tab === 'events'      && <DeploymentEventsTab      detail={detail} />}
+          </div>
+        </div>
+       ) : null}
+    </Modal>
+  )
+}
+
+function DeploymentOverviewTab({ detail }: { detail: K8sDeploymentDetail }) {
+  const [ready, desired] = [detail.ready, detail.desired]
+  return (
+    <div className="space-y-5">
+      {/* Header stats */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Desired',    value: String(detail.desired) },
+          { label: 'Ready',      value: String(detail.ready) },
+          { label: 'Available',  value: String(detail.available) },
+          { label: 'Up-to-date', value: String(detail.up_to_date) },
+        ].map(({ label, value }) => (
+          <div key={label} className="bg-surface-3 rounded p-3 text-center">
+            <div className="text-[10px] text-muted uppercase tracking-wide mb-1">{label}</div>
+            <div className={`font-mono text-lg font-semibold ${label === 'Ready' && ready < desired ? 'text-warning' : 'text-gray-100'}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Strategy */}
+      <div>
+        <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Strategy</div>
+        <div className="bg-surface-3 rounded p-3 flex flex-wrap gap-4 text-xs">
+          <div><span className="text-muted">Type:</span> <span className="font-mono text-gray-300">{detail.strategy.type}</span></div>
+          {detail.strategy.max_surge != null && (
+            <div><span className="text-muted">maxSurge:</span> <span className="font-mono text-gray-300">{detail.strategy.max_surge}</span></div>
+          )}
+          {detail.strategy.max_unavailable != null && (
+            <div><span className="text-muted">maxUnavailable:</span> <span className="font-mono text-gray-300">{detail.strategy.max_unavailable}</span></div>
+          )}
+        </div>
+      </div>
+
+      {/* Selectors */}
+      {Object.keys(detail.selector).length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Selector</div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(detail.selector).map(([k, v]) => (
+              <span key={k} className="text-[10px] font-mono bg-surface-3 rounded px-2 py-0.5">
+                <span className="text-accent">{k}</span>=<span className="text-gray-300">{v}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Conditions */}
+      {detail.conditions.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Conditions</div>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-4 text-muted">
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-left font-medium">Reason</th>
+                  <th className="px-3 py-2 text-left font-medium">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.conditions.map((c, i) => (
+                  <tr key={i} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+                    <td className="px-3 py-2 font-semibold text-gray-200">{c.type}</td>
+                    <td className="px-3 py-2">
+                      <span className={c.status === 'True' ? 'badge-ok' : 'badge-error'}>{c.status}</span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-muted">{c.reason || '—'}</td>
+                    <td className="px-3 py-2 text-muted max-w-xs break-words">{c.message || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Labels */}
+      {Object.keys(detail.labels).length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Labels</div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(detail.labels).map(([k, v]) => (
+              <span key={k} className="text-[10px] font-mono bg-surface-3 rounded px-2 py-0.5">
+                <span className="text-accent">{k}</span>=<span className="text-gray-300">{v}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DeploymentContainersTab({ detail }: { detail: K8sDeploymentDetail }) {
+  if (detail.pod_template_containers.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No containers in pod template.</div>
+  return (
+    <div className="space-y-3">
+      {detail.pod_template_containers.map((c) => (
+        <div key={c.name} className="card p-3 space-y-2">
+          <div className="font-semibold text-sm text-white">{c.name}</div>
+          <div className="font-mono text-xs text-muted break-all">{c.image}</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div className="text-[10px] text-muted uppercase mb-1">Requests</div>
+              {Object.keys(c.resources.requests).length > 0
+                ? Object.entries(c.resources.requests).map(([k, v]) => (
+                    <div key={k} className="font-mono text-gray-400"><span className="text-muted">{k}:</span> {v}</div>
+                  ))
+                : <div className="text-muted text-[10px] italic">none</div>}
+            </div>
+            <div>
+              <div className="text-[10px] text-muted uppercase mb-1">Limits</div>
+              {Object.keys(c.resources.limits).length > 0
+                ? Object.entries(c.resources.limits).map(([k, v]) => (
+                    <div key={k} className="font-mono text-gray-400"><span className="text-muted">{k}:</span> {v}</div>
+                  ))
+                : <div className="text-muted text-[10px] italic">none</div>}
+            </div>
+          </div>
+          {c.ports.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {c.ports.map((pp, i) => (
+                <span key={i} className="text-[10px] font-mono bg-surface-3 rounded px-1.5 py-0.5 text-muted">
+                  {pp.name ? `${pp.name}: ` : ''}{pp.container_port}/{pp.protocol}
+                </span>
+              ))}
+            </div>
+          )}
+          {c.env_count > 0 && <div className="text-[10px] text-muted">{c.env_count} env var{c.env_count !== 1 ? 's' : ''}</div>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DeploymentEventsTab({ detail }: { detail: K8sDeploymentDetail }) {
+  if (detail.events.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No events found for this deployment.</div>
+  return (
+    <div className="space-y-1.5">
+      {detail.events.map((e, i) => (
+        <div key={i} className={`text-xs rounded p-2.5 border ${e.type === 'Warning' ? 'bg-yellow-500/5 border-yellow-500/20' : 'bg-surface-3 border-surface-4'}`}>
+          <div className="flex items-start gap-2 flex-wrap">
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${e.type === 'Warning' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-blue-500/20 text-blue-300'}`}>{e.type}</span>
+            <span className="font-semibold text-gray-300">{e.reason}</span>
+            {e.count > 1 && <span className="text-muted text-[10px]">×{e.count}</span>}
+            <span className="text-muted text-[10px] ml-auto whitespace-nowrap">{fmtAge(e.last_time)}</span>
+          </div>
+          <div className="text-muted mt-1 break-words">{e.message}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Node Detail Modal ──────────────────────────────────────────────────────
+
+type NodeDetailTab = 'overview' | 'conditions' | 'pods'
+
+function NodeDetailModal({ node, detail, loading, error, onClose }: {
+  node: K8sNode; detail: K8sNodeDetail | null; loading: boolean; error: string | null; onClose: () => void
+}) {
+  const [tab, setTab] = useState<NodeDetailTab>('overview')
+  return (
+    <Modal title={node.name} subtitle={node.status} icon={<Server className="w-4 h-4 text-muted" />} onClose={onClose} wide>
+      {loading ? <ModalLoading label="Loading node details…" /> :
+       error   ? <ErrorBanner msg={error} /> :
+       detail  ? (
+        <div className="flex flex-col" style={{ minHeight: 0 }}>
+          <div className="flex gap-1 border-b border-surface-4 px-1 pt-1 flex-shrink-0">
+            {(['overview', 'conditions', 'pods'] as NodeDetailTab[]).map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-3 py-2 text-xs font-medium capitalize border-b-2 -mb-px transition-colors ${tab === t ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-gray-300'}`}>
+                {t}
+                {t === 'pods' && detail.pods.length > 0 && (
+                  <span className="ml-1 text-[10px] bg-surface-4 rounded px-1">{detail.pods.length}</span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="overflow-y-auto p-4">
+            {tab === 'overview'   && <NodeOverviewTab   detail={detail} />}
+            {tab === 'conditions' && <NodeConditionsTab detail={detail} />}
+            {tab === 'pods'       && <NodePodsTab       detail={detail} />}
+          </div>
+        </div>
+       ) : null}
+    </Modal>
+  )
+}
+
+function _parseK8sCpu(cpu: string): number {
+  if (!cpu) return 0
+  if (cpu.endsWith('m')) return parseInt(cpu) / 1000
+  return parseFloat(cpu) || 0
+}
+
+function _parseK8sMem(mem: string): number {
+  if (!mem) return 0
+  if (mem.endsWith('Ki')) return parseInt(mem) * 1024
+  if (mem.endsWith('Mi')) return parseInt(mem) * 1024 * 1024
+  if (mem.endsWith('Gi')) return parseInt(mem) * 1024 * 1024 * 1024
+  return parseInt(mem) || 0
+}
+
+function _fmtMem(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KiB`
+  return `${bytes} B`
+}
+
+function ResourceBar({ label, used, total, fmt }: { label: string; used: number; total: number; fmt: (n: number) => string }) {
+  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0
+  const color = pct > 85 ? 'bg-danger' : pct > 65 ? 'bg-warning' : 'bg-green-500'
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-xs">
+        <span className="text-muted">{label}</span>
+        <span className="font-mono text-gray-300">{fmt(used)} / {fmt(total)}</span>
+      </div>
+      <div className="h-1.5 bg-surface-4 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function NodeOverviewTab({ detail }: { detail: K8sNodeDetail }) {
+  const info = detail.node_info
+  const capacityCpu = _parseK8sCpu(detail.capacity['cpu'] ?? '')
+  const allocatableCpu = _parseK8sCpu(detail.allocatable['cpu'] ?? '')
+  const capacityMem = _parseK8sMem(detail.capacity['memory'] ?? '')
+  const allocatableMem = _parseK8sMem(detail.allocatable['memory'] ?? '')
+
+  const addresses = detail.addresses.filter((a) => a.type !== 'Hostname')
+  const hostname = detail.addresses.find((a) => a.type === 'Hostname')
+
+  return (
+    <div className="space-y-5">
+      {/* Status header */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-surface-3 rounded p-3 space-y-1">
+          <div className="text-[10px] text-muted uppercase tracking-wide">Status</div>
+          <div className="flex items-center gap-2">
+            {detail.status === 'Ready'
+              ? <span className="badge-ok">Ready</span>
+              : <span className="badge-error">NotReady</span>}
+            {detail.unschedulable && <span className="text-xs font-semibold text-yellow-300 bg-yellow-500/15 px-1.5 py-0.5 rounded">Cordoned</span>}
+          </div>
+        </div>
+        <div className="bg-surface-3 rounded p-3 space-y-1">
+          <div className="text-[10px] text-muted uppercase tracking-wide">Roles</div>
+          <div className="flex flex-wrap gap-1">
+            {detail.roles.map((r) => (
+              <span key={r} className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300">{r}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* System info */}
+      <div>
+        <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">System Info</div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+          {[
+            { label: 'OS Image',          value: info.os_image },
+            { label: 'Kernel',            value: info.kernel_version },
+            { label: 'Container Runtime', value: info.container_runtime },
+            { label: 'Kubelet Version',   value: info.kubelet_version },
+            { label: 'Architecture',      value: info.architecture },
+            { label: 'Operating System',  value: info.operating_system },
+            ...(hostname ? [{ label: 'Hostname', value: hostname.address }] : []),
+            { label: 'Age',               value: fmtAge(detail.created) },
+          ].map(({ label, value }) => (
+            <div key={label}>
+              <div className="text-[10px] text-muted uppercase tracking-wide">{label}</div>
+              <div className="text-xs font-mono text-gray-300 mt-0.5 break-all">{value || '—'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Addresses */}
+      {addresses.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Addresses</div>
+          <div className="flex flex-wrap gap-2">
+            {addresses.map((a, i) => (
+              <div key={i} className="bg-surface-3 rounded px-2 py-1.5 text-xs">
+                <span className="text-muted">{a.type}: </span>
+                <span className="font-mono text-gray-300">{a.address}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Capacity / Allocatable */}
+      <div>
+        <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Capacity vs Allocatable</div>
+        <div className="space-y-3 bg-surface-3 rounded p-3">
+          <ResourceBar
+            label="CPU"
+            used={allocatableCpu}
+            total={capacityCpu}
+            fmt={(n) => `${n.toFixed(2)} cores`}
+          />
+          <ResourceBar
+            label="Memory"
+            used={allocatableMem}
+            total={capacityMem}
+            fmt={_fmtMem}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NodeConditionsTab({ detail }: { detail: K8sNodeDetail }) {
+  if (detail.conditions.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No conditions found.</div>
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-surface-4 text-muted">
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-left font-medium">Status</th>
+            <th className="px-3 py-2 text-left font-medium">Reason</th>
+            <th className="px-3 py-2 text-left font-medium">Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {detail.conditions.map((c, i) => {
+            const isOk = (c.type === 'Ready' && c.status === 'True') ||
+                         (c.type !== 'Ready' && c.status === 'False')
+            return (
+              <tr key={i} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+                <td className="px-3 py-2 font-semibold text-gray-200">{c.type}</td>
+                <td className="px-3 py-2">
+                  <span className={isOk ? 'badge-ok' : 'badge-error'}>{c.status}</span>
+                </td>
+                <td className="px-3 py-2 font-mono text-muted">{c.reason || '—'}</td>
+                <td className="px-3 py-2 text-muted max-w-xs break-words">{c.message || '—'}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function NodePodsTab({ detail }: { detail: K8sNodeDetail }) {
+  if (detail.pods.length === 0)
+    return <div className="text-sm text-muted text-center py-8">No pods scheduled on this node.</div>
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-surface-4 text-muted">
+            <th className="px-3 py-2 text-left font-medium">Pod</th>
+            <th className="px-3 py-2 text-left font-medium">Namespace</th>
+            <th className="px-3 py-2 text-left font-medium">Status</th>
+            <th className="px-3 py-2 text-left font-medium">Ready</th>
+            <th className="px-3 py-2 text-left font-medium">Age</th>
+          </tr>
+        </thead>
+        <tbody>
+          {detail.pods.map((p, i) => (
+            <tr key={i} className="border-b border-surface-4/50 hover:bg-surface-3/30">
+              <td className="px-3 py-2 font-mono text-gray-200 max-w-[220px] truncate" title={p.name}>{p.name}</td>
+              <td className="px-3 py-2"><NsBadge ns={p.namespace} /></td>
+              <td className="px-3 py-2"><PodStatusBadge status={p.status} /></td>
+              <td className="px-3 py-2 font-mono text-muted">{p.ready}</td>
+              <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(p.created)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Shell terminal ─────────────────────────────────────────────────────────
 
 const SHELL_CANDIDATES = ['/bin/bash', '/bin/sh', '/bin/ash', '/usr/bin/bash', '/usr/bin/sh']
@@ -1293,10 +1808,12 @@ function ModalLoading({ label }: { label: string }) {
 
 // ── Longhorn view (sub-tabs within Longhorn tab) ───────────────────────────
 
-function LonghornView({ volumes, nodes, subTab, onSubTab, onRefresh }: {
+function LonghornView({ volumes, nodes, subTab, onSubTab, onRefresh, onDetailVolume, onDetailNode }: {
   volumes: TabState<K8sLonghornVolume>; nodes: TabState<K8sLonghornNode>
   subTab: 'volumes' | 'nodes'; onSubTab: (s: 'volumes' | 'nodes') => void
   onRefresh: () => void
+  onDetailVolume: (v: K8sLonghornVolume) => void
+  onDetailNode: (n: K8sLonghornNode) => void
 }) {
   const isLoading = volumes.loading || nodes.loading
 
@@ -1326,13 +1843,13 @@ function LonghornView({ volumes, nodes, subTab, onSubTab, onRefresh }: {
           </div>
         </div>
       </div>
-      {subTab === 'volumes' && <LonghornVolumesTable state={volumes} />}
-      {subTab === 'nodes'   && <LonghornNodesTable   state={nodes} />}
+      {subTab === 'volumes' && <LonghornVolumesTable state={volumes} onDetail={onDetailVolume} />}
+      {subTab === 'nodes'   && <LonghornNodesTable   state={nodes}   onDetail={onDetailNode} />}
     </div>
   )
 }
 
-function LonghornVolumesTable({ state }: { state: TabState<K8sLonghornVolume> }) {
+function LonghornVolumesTable({ state, onDetail }: { state: TabState<K8sLonghornVolume>; onDetail: (v: K8sLonghornVolume) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'state', label: 'State' },
@@ -1343,8 +1860,8 @@ function LonghornVolumesTable({ state }: { state: TabState<K8sLonghornVolume> })
   return (
     <DataTable state={state} emptyMsg="No Longhorn volumes found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((v) => (
-        <tr key={v.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{v.name}</td>
+        <tr key={v.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(v)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{v.name}</td>
           <td className="px-3 py-2"><LonghornStateBadge state={v.state} /></td>
           <td className="px-3 py-2"><LonghornRobustnessBadge robustness={v.robustness} /></td>
           <td className="px-3 py-2 font-mono text-muted">{fmtBytes(v.size)}</td>
@@ -1357,7 +1874,7 @@ function LonghornVolumesTable({ state }: { state: TabState<K8sLonghornVolume> })
   )
 }
 
-function LonghornNodesTable({ state }: { state: TabState<K8sLonghornNode> }) {
+function LonghornNodesTable({ state, onDetail }: { state: TabState<K8sLonghornNode>; onDetail: (n: K8sLonghornNode) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'ready', label: 'Ready' },
@@ -1367,8 +1884,8 @@ function LonghornNodesTable({ state }: { state: TabState<K8sLonghornNode> }) {
   return (
     <DataTable state={state} emptyMsg="No Longhorn nodes found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((n) => (
-        <tr key={n.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{n.name}</td>
+        <tr key={n.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(n)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{n.name}</td>
           <td className="px-3 py-2">{n.ready ? <span className="badge-ok">Ready</span> : <span className="badge-error">NotReady</span>}</td>
           <td className="px-3 py-2">{n.schedulable ? <span className="badge-ok">Yes</span> : <span className="badge-muted">No</span>}</td>
           <td className="px-3 py-2 font-mono text-muted text-center">{n.disk_count}</td>
@@ -1381,13 +1898,14 @@ function LonghornNodesTable({ state }: { state: TabState<K8sLonghornNode> }) {
 
 // ── Table components ───────────────────────────────────────────────────────
 
-function NodesTable({ state, onYaml, onCordon, onUncordon, onDrain, onDelete, actionLoading }: {
+function NodesTable({ state, onYaml, onCordon, onUncordon, onDrain, onDelete, actionLoading, onDetail }: {
   state: TabState<K8sNode>; onYaml: (n: K8sNode) => void
   onCordon:   (name: string) => void
   onUncordon: (name: string) => void
   onDrain:    (name: string) => void
   onDelete:   (name: string) => void
   actionLoading: string | null
+  onDetail:   (n: K8sNode) => void
 }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
@@ -1399,7 +1917,9 @@ function NodesTable({ state, onYaml, onCordon, onUncordon, onDrain, onDelete, ac
     <DataTable state={state} emptyMsg="No nodes found." cols={cols} sort={sort} onSort={toggle} extraCols={['Roles', 'Scheduling', '']}>
       {sorted(state.data, sort).map((n) => (
         <tr key={n.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{n.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200">
+            <button onClick={() => onDetail(n)} className="hover:text-accent transition-colors text-left">{n.name}</button>
+          </td>
           <td className="px-3 py-2">{n.status === 'Ready' ? <span className="badge-ok">Ready</span> : <span className="badge-error">NotReady</span>}</td>
           <td className="px-3 py-2 font-mono text-muted">{n.version}</td>
           <td className="px-3 py-2 font-mono text-muted">{n.internal_ip || '—'}</td>
@@ -1415,6 +1935,7 @@ function NodesTable({ state, onYaml, onCordon, onUncordon, onDrain, onDelete, ac
           </td>
           <td className="px-3 py-2">
             <div className="flex items-center gap-1">
+              <ActionBtn title="Node details"  onClick={() => onDetail(n)}         loading={false}                                           icon={<Info    className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
               {n.unschedulable
                 ? <ActionBtn title="Uncordon node"  onClick={() => onUncordon(n.name)} loading={actionLoading === `uncordon:${n.name}`} icon={<Unlock  className="w-3.5 h-3.5" />} hoverColor="hover:text-green-400" />
                 : <ActionBtn title="Cordon node"    onClick={() => onCordon(n.name)}   loading={actionLoading === `cordon:${n.name}`}   icon={<Lock    className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />}
@@ -1548,11 +2069,12 @@ function PodsTable({ state, actionLoading, onRestart, onLogs, onShell, onYaml, o
   )
 }
 
-function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml }: {
+function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml, onDetail }: {
   state: TabState<K8sDeployment>; actionLoading: string | null
   onScale: (ns: string, name: string, current: number, delta: number) => void
   onRestart: (d: K8sDeployment) => void
   onYaml: (d: K8sDeployment) => void
+  onDetail: (d: K8sDeployment) => void
 }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
@@ -1569,7 +2091,9 @@ function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml }: 
         const scaleBusy = actionLoading === scaleKey
         return (
           <tr key={`${d.namespace}/${d.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-            <td className="px-3 py-2 font-medium text-gray-200">{d.name}</td>
+            <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={d.name}>
+              <button onClick={() => onDetail(d)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{d.name}</button>
+            </td>
             <td className="px-3 py-2"><NsBadge ns={d.namespace} /></td>
             <td className="px-3 py-2 font-mono"><span className={ready === total && total > 0 ? 'text-green-400' : 'text-warning'}>{d.ready}</span></td>
             <td className="px-3 py-2 font-mono text-muted text-center">{d.up_to_date}</td>
@@ -1577,6 +2101,7 @@ function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml }: 
             <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(d.created)}</td>
             <td className="px-3 py-2">
               <div className="flex items-center gap-1">
+                <ActionBtn title="Deployment details" onClick={() => onDetail(d)} loading={false} icon={<Info className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
                 <button disabled={scaleBusy || total <= 0} title="Scale down" onClick={() => onScale(d.namespace, d.name, total, -1)} className="text-muted hover:text-danger transition-colors p-0.5 disabled:opacity-40">
                   {scaleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Minus className="w-3.5 h-3.5" />}
                 </button>
@@ -1595,10 +2120,11 @@ function DeploymentsTable({ state, actionLoading, onScale, onRestart, onYaml }: 
   )
 }
 
-function StatefulSetsTable({ state, actionLoading, onRestart, onYaml }: {
+function StatefulSetsTable({ state, actionLoading, onRestart, onYaml, onDetail }: {
   state: TabState<K8sStatefulSet>; actionLoading: string | null
   onRestart: (s: K8sStatefulSet) => void
   onYaml: (s: K8sStatefulSet) => void
+  onDetail: (s: K8sStatefulSet) => void
 }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
@@ -1612,13 +2138,16 @@ function StatefulSetsTable({ state, actionLoading, onRestart, onYaml }: {
         const restartKey = `restart-workload:${s.namespace}/${s.name}`
         return (
           <tr key={`${s.namespace}/${s.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-            <td className="px-3 py-2 font-medium text-gray-200">{s.name}</td>
+            <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={s.name}>
+              <button onClick={() => onDetail(s)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{s.name}</button>
+            </td>
             <td className="px-3 py-2"><NsBadge ns={s.namespace} /></td>
             <td className="px-3 py-2 font-mono"><span className={ready === total && total > 0 ? 'text-green-400' : 'text-warning'}>{s.ready}</span></td>
             <td className="px-3 py-2 font-mono text-muted">{s.current_revision || '—'}</td>
             <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(s.created)}</td>
             <td className="px-3 py-2">
               <div className="flex items-center gap-1">
+                <ActionBtn title="StatefulSet details" onClick={() => onDetail(s)} loading={false} icon={<Info className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
                 <ActionBtn title="Rollout Restart" onClick={() => onRestart(s)} loading={actionLoading === restartKey} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
                 <YamlBtn onClick={() => onYaml(s)} />
               </div>
@@ -1630,10 +2159,11 @@ function StatefulSetsTable({ state, actionLoading, onRestart, onYaml }: {
   )
 }
 
-function DaemonSetsTable({ state, actionLoading, onRestart, onYaml }: {
+function DaemonSetsTable({ state, actionLoading, onRestart, onYaml, onDetail }: {
   state: TabState<K8sDaemonSet>; actionLoading: string | null
   onRestart: (d: K8sDaemonSet) => void
   onYaml: (d: K8sDaemonSet) => void
+  onDetail: (d: K8sDaemonSet) => void
 }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
@@ -1648,7 +2178,9 @@ function DaemonSetsTable({ state, actionLoading, onRestart, onYaml }: {
         const restartKey = `restart-workload:${d.namespace}/${d.name}`
         return (
           <tr key={`${d.namespace}/${d.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-            <td className="px-3 py-2 font-medium text-gray-200">{d.name}</td>
+            <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={d.name}>
+              <button onClick={() => onDetail(d)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{d.name}</button>
+            </td>
             <td className="px-3 py-2"><NsBadge ns={d.namespace} /></td>
             <td className="px-3 py-2 font-mono text-muted text-center">{d.desired}</td>
             <td className="px-3 py-2 font-mono text-muted text-center">{d.current}</td>
@@ -1658,6 +2190,7 @@ function DaemonSetsTable({ state, actionLoading, onRestart, onYaml }: {
             <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(d.created)}</td>
             <td className="px-3 py-2">
               <div className="flex items-center gap-1">
+                <ActionBtn title="DaemonSet details" onClick={() => onDetail(d)} loading={false} icon={<Info className="w-3.5 h-3.5" />} hoverColor="hover:text-accent" />
                 <ActionBtn title="Rollout Restart" onClick={() => onRestart(d)} loading={actionLoading === restartKey} icon={<RotateCcw className="w-3.5 h-3.5" />} hoverColor="hover:text-yellow-400" />
                 <YamlBtn onClick={() => onYaml(d)} />
               </div>
@@ -1669,7 +2202,7 @@ function DaemonSetsTable({ state, actionLoading, onRestart, onYaml }: {
   )
 }
 
-function JobsTable({ state }: { state: TabState<K8sJob> }) {
+function JobsTable({ state, onDetail }: { state: TabState<K8sJob>; onDetail: (j: K8sJob) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1679,8 +2212,8 @@ function JobsTable({ state }: { state: TabState<K8sJob> }) {
   return (
     <DataTable state={state} emptyMsg="No jobs found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((j) => (
-        <tr key={`${j.namespace}/${j.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{j.name}</td>
+        <tr key={`${j.namespace}/${j.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(j)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{j.name}</td>
           <td className="px-3 py-2"><NsBadge ns={j.namespace} /></td>
           <td className="px-3 py-2"><JobStatusBadge status={j.status} /></td>
           <td className="px-3 py-2 font-mono text-muted">{j.completions}</td>
@@ -1693,7 +2226,7 @@ function JobsTable({ state }: { state: TabState<K8sJob> }) {
   )
 }
 
-function CronJobsTable({ state }: { state: TabState<K8sCronJob> }) {
+function CronJobsTable({ state, onDetail }: { state: TabState<K8sCronJob>; onDetail: (cj: K8sCronJob) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1703,8 +2236,8 @@ function CronJobsTable({ state }: { state: TabState<K8sCronJob> }) {
   return (
     <DataTable state={state} emptyMsg="No CronJobs found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((cj) => (
-        <tr key={`${cj.namespace}/${cj.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{cj.name}</td>
+        <tr key={`${cj.namespace}/${cj.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(cj)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{cj.name}</td>
           <td className="px-3 py-2"><NsBadge ns={cj.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{cj.schedule}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{cj.last_schedule ? fmtAge(cj.last_schedule) + ' ago' : '—'}</td>
@@ -1717,7 +2250,7 @@ function CronJobsTable({ state }: { state: TabState<K8sCronJob> }) {
   )
 }
 
-function ServicesTable({ state, onYaml }: { state: TabState<K8sService>; onYaml: (s: K8sService) => void }) {
+function ServicesTable({ state, onYaml, onDetail }: { state: TabState<K8sService>; onYaml: (s: K8sService) => void; onDetail: (s: K8sService) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1728,7 +2261,9 @@ function ServicesTable({ state, onYaml }: { state: TabState<K8sService>; onYaml:
     <DataTable state={state} emptyMsg="No services found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((svc) => (
         <tr key={`${svc.namespace}/${svc.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{svc.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={svc.name}>
+            <button onClick={() => onDetail(svc)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{svc.name}</button>
+          </td>
           <td className="px-3 py-2"><NsBadge ns={svc.namespace} /></td>
           <td className="px-3 py-2"><SvcTypeBadge type={svc.type} /></td>
           <td className="px-3 py-2 font-mono text-muted">{svc.cluster_ip || '—'}</td>
@@ -1742,7 +2277,7 @@ function ServicesTable({ state, onYaml }: { state: TabState<K8sService>; onYaml:
   )
 }
 
-function IngressesTable({ state, onYaml }: { state: TabState<K8sIngress>; onYaml: (i: K8sIngress) => void }) {
+function IngressesTable({ state, onYaml, onDetail }: { state: TabState<K8sIngress>; onYaml: (i: K8sIngress) => void; onDetail: (i: K8sIngress) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1753,7 +2288,9 @@ function IngressesTable({ state, onYaml }: { state: TabState<K8sIngress>; onYaml
     <DataTable state={state} emptyMsg="No ingresses found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((ing) => (
         <tr key={`${ing.namespace}/${ing.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{ing.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={ing.name}>
+            <button onClick={() => onDetail(ing)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{ing.name}</button>
+          </td>
           <td className="px-3 py-2"><NsBadge ns={ing.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{ing.class || '—'}</td>
           <td className="px-3 py-2 text-xs max-w-[200px]">{ing.hosts.length ? ing.hosts.map((h) => <div key={h} className="font-mono text-muted">{h}</div>) : '—'}</td>
@@ -1766,7 +2303,7 @@ function IngressesTable({ state, onYaml }: { state: TabState<K8sIngress>; onYaml
   )
 }
 
-function IngressClassesTable({ state }: { state: TabState<K8sIngressClass> }) {
+function IngressClassesTable({ state, onDetail }: { state: TabState<K8sIngressClass>; onDetail: (ic: K8sIngressClass) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'controller', label: 'Controller' },
@@ -1776,8 +2313,8 @@ function IngressClassesTable({ state }: { state: TabState<K8sIngressClass> }) {
   return (
     <DataTable state={state} emptyMsg="No IngressClasses found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((ic) => (
-        <tr key={ic.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{ic.name}</td>
+        <tr key={ic.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(ic)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{ic.name}</td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{ic.controller || '—'}</td>
           <td className="px-3 py-2 text-center">{ic.is_default ? <span className="badge-ok">Yes</span> : <span className="badge-muted">No</span>}</td>
           <td className="px-3 py-2 font-mono text-muted text-xs max-w-[200px] truncate" title={ic.parameters}>{ic.parameters || '—'}</td>
@@ -1788,7 +2325,7 @@ function IngressClassesTable({ state }: { state: TabState<K8sIngressClass> }) {
   )
 }
 
-function HTTPRoutesTable({ state }: { state: TabState<K8sHTTPRoute> }) {
+function HTTPRoutesTable({ state, onDetail }: { state: TabState<K8sHTTPRoute>; onDetail: (r: K8sHTTPRoute) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1798,8 +2335,8 @@ function HTTPRoutesTable({ state }: { state: TabState<K8sHTTPRoute> }) {
   return (
     <DataTable state={state} emptyMsg="No HTTPRoutes found — Gateway API may not be installed on this cluster." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((r) => (
-        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{r.name}</td>
+        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(r)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{r.name}</td>
           <td className="px-3 py-2"><NsBadge ns={r.namespace} /></td>
           <td className="px-3 py-2 text-xs max-w-[200px]">{r.hostnames.length ? r.hostnames.map((h) => <div key={h} className="font-mono text-muted">{h}</div>) : '—'}</td>
           <td className="px-3 py-2 text-xs">{r.parents.length ? r.parents.map((p) => <div key={p} className="font-mono text-muted">{p}</div>) : '—'}</td>
@@ -1811,7 +2348,7 @@ function HTTPRoutesTable({ state }: { state: TabState<K8sHTTPRoute> }) {
   )
 }
 
-function PVsTable({ state, onYaml }: { state: TabState<K8sPV>; onYaml: (v: K8sPV) => void }) {
+function PVsTable({ state, onYaml, onDetail }: { state: TabState<K8sPV>; onYaml: (v: K8sPV) => void; onDetail: (v: K8sPV) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'capacity', label: 'Capacity' },
@@ -1823,7 +2360,9 @@ function PVsTable({ state, onYaml }: { state: TabState<K8sPV>; onYaml: (v: K8sPV
     <DataTable state={state} emptyMsg="No PersistentVolumes found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((pv) => (
         <tr key={pv.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{pv.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={pv.name}>
+            <button onClick={() => onDetail(pv)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{pv.name}</button>
+          </td>
           <td className="px-3 py-2 font-mono text-muted">{pv.capacity || '—'}</td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{pv.access_modes.join(', ') || '—'}</td>
           <td className="px-3 py-2 text-muted text-xs">{pv.reclaim_policy || '—'}</td>
@@ -1838,7 +2377,7 @@ function PVsTable({ state, onYaml }: { state: TabState<K8sPV>; onYaml: (v: K8sPV
   )
 }
 
-function PVCsTable({ state, onYaml }: { state: TabState<K8sPVC>; onYaml: (v: K8sPVC) => void }) {
+function PVCsTable({ state, onYaml, onDetail }: { state: TabState<K8sPVC>; onYaml: (v: K8sPVC) => void; onDetail: (v: K8sPVC) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1850,7 +2389,9 @@ function PVCsTable({ state, onYaml }: { state: TabState<K8sPVC>; onYaml: (v: K8s
     <DataTable state={state} emptyMsg="No PersistentVolumeClaims found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((pvc) => (
         <tr key={`${pvc.namespace}/${pvc.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{pvc.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={pvc.name}>
+            <button onClick={() => onDetail(pvc)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{pvc.name}</button>
+          </td>
           <td className="px-3 py-2"><NsBadge ns={pvc.namespace} /></td>
           <td className="px-3 py-2"><PVStatusBadge status={pvc.status} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs max-w-[140px] truncate" title={pvc.volume}>{pvc.volume || '—'}</td>
@@ -1865,14 +2406,16 @@ function PVCsTable({ state, onYaml }: { state: TabState<K8sPVC>; onYaml: (v: K8s
   )
 }
 
-function ConfigMapsTable({ state, onYaml }: { state: TabState<K8sConfigMap>; onYaml: (c: K8sConfigMap) => void }) {
+function ConfigMapsTable({ state, onYaml, onDetail }: { state: TabState<K8sConfigMap>; onYaml: (c: K8sConfigMap) => void; onDetail: (c: K8sConfigMap) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [{ key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' }, { key: 'data_count', label: 'Data' }, { key: 'created', label: 'Age' }]
   return (
     <DataTable state={state} emptyMsg="No ConfigMaps found." cols={cols} sort={sort} onSort={toggle} extraCols={['']}>
       {sorted(state.data, sort).map((cm) => (
         <tr key={`${cm.namespace}/${cm.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{cm.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={cm.name}>
+            <button onClick={() => onDetail(cm)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{cm.name}</button>
+          </td>
           <td className="px-3 py-2"><NsBadge ns={cm.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-center">{cm.data_count}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(cm.created)}</td>
@@ -1883,7 +2426,7 @@ function ConfigMapsTable({ state, onYaml }: { state: TabState<K8sConfigMap>; onY
   )
 }
 
-function SecretsTable({ state, onYaml, onReveal }: { state: TabState<K8sSecret>; onYaml: (s: K8sSecret) => void; onReveal: (s: K8sSecret) => void }) {
+function SecretsTable({ state, onYaml, onReveal, onDetail }: { state: TabState<K8sSecret>; onYaml: (s: K8sSecret) => void; onReveal: (s: K8sSecret) => void; onDetail: (s: K8sSecret) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -1893,7 +2436,9 @@ function SecretsTable({ state, onYaml, onReveal }: { state: TabState<K8sSecret>;
     <DataTable state={state} emptyMsg="No secrets found." cols={cols} sort={sort} onSort={toggle} extraCols={['', '']}>
       {sorted(state.data, sort).map((sec) => (
         <tr key={`${sec.namespace}/${sec.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{sec.name}</td>
+          <td className="px-3 py-2 font-medium text-gray-200 max-w-[200px] truncate" title={sec.name}>
+            <button onClick={() => onDetail(sec)} className="hover:text-accent transition-colors text-left truncate max-w-full w-full">{sec.name}</button>
+          </td>
           <td className="px-3 py-2"><NsBadge ns={sec.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{sec.type || '—'}</td>
           <td className="px-3 py-2 font-mono text-muted text-center">{sec.data_count}</td>
@@ -2057,7 +2602,7 @@ function fmtBytes(raw: string): string {
 
 // ── Cluster Overview Panel ─────────────────────────────────────────────────
 
-function OverviewPanel({ state, onRefresh }: { state: OverviewState; onRefresh: () => void }) {
+function OverviewPanel({ state, onRefresh, onNodeClick }: { state: OverviewState; onRefresh: () => void; onNodeClick: (name: string) => void }) {
   if (state.loading) return <LoadingSpinner />
   if (state.error)   return <ErrorBanner msg={state.error} />
   if (!state.data)   return null
@@ -2073,9 +2618,9 @@ function OverviewPanel({ state, onRefresh }: { state: OverviewState; onRefresh: 
         <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Nodes</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {d.nodes.map((n) => (
-            <div key={n.name} className={`card p-3 border-l-2 ${n.status === 'Ready' ? 'border-green-500' : 'border-red-500'}`}>
+            <button key={n.name} onClick={() => onNodeClick(n.name)} className={`card p-3 border-l-2 text-left w-full hover:bg-surface-3/60 transition-colors ${n.status === 'Ready' ? 'border-green-500' : 'border-red-500'}`}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium text-gray-200 truncate">{n.name}</span>
+                <span className="text-sm font-medium text-gray-200 truncate hover:text-accent transition-colors">{n.name}</span>
                 <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${n.status === 'Ready' ? 'badge-ok' : 'badge-error'}`}>{n.status}</span>
               </div>
               <div className="flex flex-wrap gap-1 mb-1.5">
@@ -2087,7 +2632,7 @@ function OverviewPanel({ state, onRefresh }: { state: OverviewState; onRefresh: 
                 {n.cpu && <span>CPU: {n.cpu}</span>}
                 {n.memory && <span>Mem: {fmtK8sMem(n.memory)}</span>}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>
@@ -2309,8 +2854,22 @@ function MetalLBCommunitiesTable({ state, onYaml }: { state: TabState<K8sMetalLB
   )
 }
 
-function EtcdStatusPanel({ state, onRefresh }: {
+function fmtBytesNum(bytes: number): string {
+  if (bytes <= 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`
+}
+
+function fmtMsFromSeconds(seconds: number): string {
+  if (seconds <= 0) return '—'
+  return `${(seconds * 1000).toFixed(2)} ms`
+}
+
+function EtcdStatusPanel({ state, metricsState, onRefresh }: {
   state: { data: K8sEtcdStatus | null; loading: boolean; loaded: boolean; error: string | null }
+  metricsState: { data: K8sEtcdMetrics | null; loading: boolean; loaded: boolean; error: string | null }
   onRefresh: () => void
 }) {
   if (state.loading) return <LoadingSpinner />
@@ -2328,6 +2887,10 @@ function EtcdStatusPanel({ state, onRefresh }: {
   }
 
   const members = d.members ?? []
+  const md = metricsState.data
+  const metricsAvailable = md?.available && md?.any_metrics_data
+  const proxyUnavailable = md?.available && !md?.proxy_accessible
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -2338,6 +2901,8 @@ function EtcdStatusPanel({ state, onRefresh }: {
         <SummaryCard label="Members" value={`${d.healthy_members ?? 0}/${d.total_members ?? 0}`} sub="healthy" ok={(d.healthy_members ?? 0) === (d.total_members ?? 0)} />
         <SummaryCard label="Restarts" value={String(d.total_restarts ?? 0)} sub="across members" warn={(d.total_restarts ?? 0) > 0} />
       </div>
+
+      {/* Pod status table */}
       <div className="card overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -2364,6 +2929,72 @@ function EtcdStatusPanel({ state, onRefresh }: {
           </tbody>
         </table>
       </div>
+
+      {/* etcd Prometheus metrics — shown when accessible via API pod proxy */}
+      {metricsState.loading && (
+        <div className="text-xs text-muted flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Loading etcd metrics…</div>
+      )}
+      {proxyUnavailable && !metricsState.loading && (
+        <div className="card p-3 text-xs text-muted">
+          <span className="font-medium text-yellow-400">etcd metrics unavailable via pod proxy.</span>{' '}
+          The etcd metrics port (2381) is bound to the node&apos;s loopback interface and is not
+          forwarded through the Kubernetes API server proxy. This is expected when UHLD runs
+          outside the cluster network. Pod health status above is still accurate.
+        </div>
+      )}
+      {metricsAvailable && md?.members && md.members.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs font-medium text-gray-400 px-1">etcd Prometheus Metrics (via API pod proxy)</div>
+          {md.members.map((mm) => {
+            if (!mm.metrics) return null
+            const mx = mm.metrics
+            return (
+              <div key={mm.name} className="card p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs text-gray-300">{mm.name}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${mm.health_ok ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
+                    {mm.health_ok ? 'healthy' : 'unhealthy'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="space-y-0.5">
+                    <div className="text-muted">Has Leader</div>
+                    <div className={`font-mono font-medium ${mx.has_leader === 1 ? 'text-green-400' : mx.has_leader === 0 ? 'text-red-400' : 'text-muted'}`}>
+                      {mx.has_leader === 1 ? 'Yes' : mx.has_leader === 0 ? 'No' : '—'}
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-muted">Leader Changes</div>
+                    <div className={`font-mono font-medium ${mx.leader_changes_total > 0 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                      {mx.leader_changes_total > 0 ? mx.leader_changes_total.toFixed(0) : '0'}
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-muted">DB Size</div>
+                    <div className="font-mono font-medium text-gray-300">{fmtBytesNum(mx.db_size_bytes)}</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-muted">WAL fsync p99</div>
+                    <div className={`font-mono font-medium ${mx.wal_fsync_p99_seconds > 0.1 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                      {fmtMsFromSeconds(mx.wal_fsync_p99_seconds)}
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-muted">Backend commit p99</div>
+                    <div className={`font-mono font-medium ${mx.backend_commit_p99_seconds > 0.1 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                      {fmtMsFromSeconds(mx.backend_commit_p99_seconds)}
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-muted">Peer sent (total)</div>
+                    <div className="font-mono font-medium text-gray-300">{fmtBytesNum(mx.peer_sent_bytes_total)}</div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -2389,7 +3020,7 @@ function fmtK8sMem(raw: string): string {
 
 // ── Certificates Table ─────────────────────────────────────────────────────
 
-function CertificatesTable({ state }: { state: TabState<K8sCertificate> }) {
+function CertificatesTable({ state, onDetail }: { state: TabState<K8sCertificate>; onDetail: (c: K8sCertificate) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2415,8 +3046,8 @@ function CertificatesTable({ state }: { state: TabState<K8sCertificate> }) {
         const expiryColor = daysLeft === null ? '' : daysLeft < 7 ? 'text-red-400' : daysLeft < 30 ? 'text-yellow-400' : 'text-green-400'
         return (
           <tr key={`${cert.namespace}/${cert.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-            <td className="px-3 py-2">
-              <div className="font-medium text-gray-200">{cert.name}</div>
+            <td className="px-3 py-2 cursor-pointer" onClick={() => onDetail(cert)}>
+              <div className="font-medium text-gray-200 hover:text-accent transition-colors">{cert.name}</div>
               <div className="text-[10px] text-muted font-mono">secret: {cert.secret_name}</div>
             </td>
             <td className="px-3 py-2"><NsBadge ns={cert.namespace} /></td>
@@ -2491,7 +3122,7 @@ function SecretDataView({ data }: { data: Record<string, string> }) {
 
 // ── Access Control Tables ──────────────────────────────────────────────────
 
-function ServiceAccountsTable({ state }: { state: TabState<K8sServiceAccount> }) {
+function ServiceAccountsTable({ state, onDetail }: { state: TabState<K8sServiceAccount>; onDetail: (sa: K8sServiceAccount) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2500,8 +3131,8 @@ function ServiceAccountsTable({ state }: { state: TabState<K8sServiceAccount> })
   return (
     <DataTable state={state} emptyMsg="No service accounts found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((sa) => (
-        <tr key={`${sa.namespace}/${sa.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{sa.name}</td>
+        <tr key={`${sa.namespace}/${sa.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(sa)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{sa.name}</td>
           <td className="px-3 py-2"><NsBadge ns={sa.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-center">{sa.secrets}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(sa.created)}</td>
@@ -2511,7 +3142,7 @@ function ServiceAccountsTable({ state }: { state: TabState<K8sServiceAccount> })
   )
 }
 
-function RolesTable({ state }: { state: TabState<K8sRole> }) {
+function RolesTable({ state, onDetail }: { state: TabState<K8sRole>; onDetail: (r: K8sRole) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2520,8 +3151,8 @@ function RolesTable({ state }: { state: TabState<K8sRole> }) {
   return (
     <DataTable state={state} emptyMsg="No roles found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((r) => (
-        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{r.name}</td>
+        <tr key={`${r.namespace}/${r.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(r)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{r.name}</td>
           <td className="px-3 py-2"><NsBadge ns={r.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-center">{r.rules}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(r.created)}</td>
@@ -2531,7 +3162,7 @@ function RolesTable({ state }: { state: TabState<K8sRole> }) {
   )
 }
 
-function ClusterRolesTable({ state }: { state: TabState<K8sClusterRole> }) {
+function ClusterRolesTable({ state, onDetail }: { state: TabState<K8sClusterRole>; onDetail: (cr: K8sClusterRole) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'rules', label: 'Rules' },
@@ -2540,8 +3171,8 @@ function ClusterRolesTable({ state }: { state: TabState<K8sClusterRole> }) {
   return (
     <DataTable state={state} emptyMsg="No ClusterRoles found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((cr) => (
-        <tr key={cr.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{cr.name}</td>
+        <tr key={cr.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(cr)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{cr.name}</td>
           <td className="px-3 py-2 font-mono text-muted text-center">{cr.rules}</td>
           <td className="px-3 py-2 text-center">{cr.aggregation ? <span className="badge-ok">Yes</span> : <span className="badge-muted">No</span>}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(cr.created)}</td>
@@ -2551,7 +3182,7 @@ function ClusterRolesTable({ state }: { state: TabState<K8sClusterRole> }) {
   )
 }
 
-function RoleBindingsTable({ state }: { state: TabState<K8sRoleBinding> }) {
+function RoleBindingsTable({ state, onDetail }: { state: TabState<K8sRoleBinding>; onDetail: (rb: K8sRoleBinding) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2560,8 +3191,8 @@ function RoleBindingsTable({ state }: { state: TabState<K8sRoleBinding> }) {
   return (
     <DataTable state={state} emptyMsg="No RoleBindings found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((rb) => (
-        <tr key={`${rb.namespace}/${rb.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{rb.name}</td>
+        <tr key={`${rb.namespace}/${rb.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(rb)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{rb.name}</td>
           <td className="px-3 py-2"><NsBadge ns={rb.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{rb.role_ref}</td>
           <td className="px-3 py-2 font-mono text-muted text-center">{rb.subjects}</td>
@@ -2572,7 +3203,7 @@ function RoleBindingsTable({ state }: { state: TabState<K8sRoleBinding> }) {
   )
 }
 
-function ClusterRoleBindingsTable({ state }: { state: TabState<K8sClusterRoleBinding> }) {
+function ClusterRoleBindingsTable({ state, onDetail }: { state: TabState<K8sClusterRoleBinding>; onDetail: (crb: K8sClusterRoleBinding) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'role_ref', label: 'ClusterRole' },
@@ -2581,8 +3212,8 @@ function ClusterRoleBindingsTable({ state }: { state: TabState<K8sClusterRoleBin
   return (
     <DataTable state={state} emptyMsg="No ClusterRoleBindings found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((crb) => (
-        <tr key={crb.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{crb.name}</td>
+        <tr key={crb.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(crb)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{crb.name}</td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{crb.role_ref}</td>
           <td className="px-3 py-2 font-mono text-muted text-center">{crb.subjects}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(crb.created)}</td>
@@ -2631,7 +3262,7 @@ function HelmStatusBadge({ status }: { status: string }) {
 
 // ── ReplicaSets Table ──────────────────────────────────────────────────────
 
-function ReplicaSetsTable({ state }: { state: TabState<K8sReplicaSet> }) {
+function ReplicaSetsTable({ state, onDetail }: { state: TabState<K8sReplicaSet>; onDetail: (rs: K8sReplicaSet) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2641,8 +3272,8 @@ function ReplicaSetsTable({ state }: { state: TabState<K8sReplicaSet> }) {
   return (
     <DataTable state={state} emptyMsg="No ReplicaSets found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((rs) => (
-        <tr key={`${rs.namespace}/${rs.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{rs.name}</td>
+        <tr key={`${rs.namespace}/${rs.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(rs)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{rs.name}</td>
           <td className="px-3 py-2"><NsBadge ns={rs.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-center">{rs.desired}</td>
           <td className="px-3 py-2 font-mono text-center">
@@ -2688,7 +3319,7 @@ function HPAsTable({ state }: { state: TabState<K8sHPA> }) {
 
 // ── Endpoints Table ────────────────────────────────────────────────────────
 
-function EndpointsTable({ state }: { state: TabState<K8sEndpoints> }) {
+function EndpointsTable({ state, onDetail }: { state: TabState<K8sEndpoints>; onDetail: (ep: K8sEndpoints) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2697,8 +3328,8 @@ function EndpointsTable({ state }: { state: TabState<K8sEndpoints> }) {
   return (
     <DataTable state={state} emptyMsg="No Endpoints found." cols={cols} sort={sort} onSort={toggle} extraCols={['Ports']}>
       {sorted(state.data, sort).map((ep) => (
-        <tr key={`${ep.namespace}/${ep.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{ep.name}</td>
+        <tr key={`${ep.namespace}/${ep.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(ep)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{ep.name}</td>
           <td className="px-3 py-2"><NsBadge ns={ep.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-center">{ep.addresses}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(ep.created)}</td>
@@ -2711,7 +3342,7 @@ function EndpointsTable({ state }: { state: TabState<K8sEndpoints> }) {
 
 // ── NetworkPolicies Table ──────────────────────────────────────────────────
 
-function NetworkPoliciesTable({ state }: { state: TabState<K8sNetworkPolicy> }) {
+function NetworkPoliciesTable({ state, onDetail }: { state: TabState<K8sNetworkPolicy>; onDetail: (np: K8sNetworkPolicy) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'namespace', label: 'Namespace' },
@@ -2720,8 +3351,8 @@ function NetworkPoliciesTable({ state }: { state: TabState<K8sNetworkPolicy> }) 
   return (
     <DataTable state={state} emptyMsg="No NetworkPolicies found." cols={cols} sort={sort} onSort={toggle} extraCols={['Policy Types']}>
       {sorted(state.data, sort).map((np) => (
-        <tr key={`${np.namespace}/${np.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">{np.name}</td>
+        <tr key={`${np.namespace}/${np.name}`} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(np)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">{np.name}</td>
           <td className="px-3 py-2"><NsBadge ns={np.namespace} /></td>
           <td className="px-3 py-2 font-mono text-muted text-xs">{np.pod_selector}</td>
           <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtAge(np.created)}</td>
@@ -2741,7 +3372,7 @@ function NetworkPoliciesTable({ state }: { state: TabState<K8sNetworkPolicy> }) 
 
 // ── StorageClasses Table ───────────────────────────────────────────────────
 
-function StorageClassesTable({ state }: { state: TabState<K8sStorageClass> }) {
+function StorageClassesTable({ state, onDetail }: { state: TabState<K8sStorageClass>; onDetail: (sc: K8sStorageClass) => void }) {
   const [sort, toggle] = useSort()
   const cols: ColDef[] = [
     { key: 'name', label: 'Name' }, { key: 'provisioner', label: 'Provisioner' },
@@ -2751,8 +3382,8 @@ function StorageClassesTable({ state }: { state: TabState<K8sStorageClass> }) {
   return (
     <DataTable state={state} emptyMsg="No StorageClasses found." cols={cols} sort={sort} onSort={toggle}>
       {sorted(state.data, sort).map((sc) => (
-        <tr key={sc.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors">
-          <td className="px-3 py-2 font-medium text-gray-200">
+        <tr key={sc.name} className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer" onClick={() => onDetail(sc)}>
+          <td className="px-3 py-2 font-medium text-gray-200 hover:text-accent transition-colors">
             {sc.name}
             {sc.is_default && <span className="ml-1.5 badge-ok text-[10px]">default</span>}
           </td>

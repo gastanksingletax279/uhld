@@ -452,6 +452,24 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
+    # ── Deployment detail ─────────────────────────────────────────────────────
+
+    @router.get("/namespaces/{namespace}/deployments/{name}")
+    async def deployment_detail(namespace: str, name: str):
+        try:
+            return await plugin._fetch_deployment_detail(namespace, name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # ── Node detail ───────────────────────────────────────────────────────────
+
+    @router.get("/nodes/{name}/details")
+    async def node_details(name: str):
+        try:
+            return await plugin._fetch_node_detail(name)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
     # ── MetalLB ──────────────────────────────────────────────────────────────
 
     @router.get("/metallb/overview")
@@ -511,5 +529,16 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
             return await plugin._fetch_etcd_status()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+
+    @router.get("/etcd/metrics")
+    async def etcd_metrics():
+        """Fetch per-member etcd health and Prometheus metrics via the Kubernetes API
+        pod proxy.  Returns ``{"available": false, "reason": "..."}`` when etcd is
+        not detected or the pod proxy is unreachable — never raises 502 so the
+        frontend can degrade gracefully."""
+        try:
+            return await plugin._fetch_etcd_metrics()
+        except Exception as exc:
+            return {"available": False, "reason": str(exc)}
 
     return router

@@ -27,7 +27,7 @@ from backend.plugins import registry
 from backend.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)

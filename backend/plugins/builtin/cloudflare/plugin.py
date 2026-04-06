@@ -446,7 +446,7 @@ class CloudflarePlugin(PluginBase):
                 zone_id=zone_id,
                 since=since,
                 until=until,
-                metrics="queryCount,uncachedCount,staleCount,responseTime99,queryCountByResponseCode",
+                metrics="queryCount,uncachedCount,staleCount,queryCountByResponseCode",
             )
             data = self._serialize(report)
             totals = ((data or {}).get("totals") if isinstance(data, dict) else None) or {}
@@ -507,6 +507,29 @@ class CloudflarePlugin(PluginBase):
                 },
             }
         except Exception as exc:
+            # Check for error code 6007 (metric not found) in the raw exception body
+            # before mapping, so we can degrade gracefully without log spam.
+            _body = getattr(exc, "body", None)
+            if isinstance(_body, dict):
+                _errors = _body.get("errors") or []
+                if any(isinstance(e, dict) and e.get("code") == 6007 for e in _errors):
+                    logger.debug(
+                        "Cloudflare DNS analytics unavailable for zone %s (unsupported metric: %s)",
+                        zone_id,
+                        self._extract_api_errors(_body),
+                    )
+                    return {
+                        "range": range_key,
+                        "requests": 0,
+                        "bandwidth": 0,
+                        "threats": 0,
+                        "page_views": 0,
+                        "cached_requests": 0,
+                        "uncached_requests": 0,
+                        "series": [],
+                        "analytics_unavailable": True,
+                    }
+
             mapped = self._map_exception(exc, "Failed to fetch zone analytics")
             if mapped.status_code == 403:
                 # DNS Analytics requires a separate token permission. Degrade gracefully

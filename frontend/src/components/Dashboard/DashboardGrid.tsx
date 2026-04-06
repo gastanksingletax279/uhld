@@ -25,6 +25,11 @@ import { PluginWidget } from './PluginWidget'
 import { Loader2, GripVertical } from 'lucide-react'
 import type { PluginListItem, PluginSummary } from '../../api/client'
 
+export interface DashboardGridHandle {
+  sortAlpha: () => void
+  sortByType: () => void
+}
+
 // ── Persist widget order in localStorage ──────────────────────────────────────
 
 const ORDER_KEY = 'widget_order'
@@ -124,7 +129,13 @@ function OverlayCard({
 
 // ── Main grid ─────────────────────────────────────────────────────────────────
 
-export function DashboardGrid({ editing }: { editing: boolean }) {
+export function DashboardGrid({
+  editing,
+  onRegisterHandles,
+}: {
+  editing: boolean
+  onRegisterHandles?: (handles: DashboardGridHandle) => void
+}) {
   const { plugins, summaries, fetchSummary, summaryLoading } = usePluginStore()
   const enabled = plugins.filter((p) => p.enabled)
 
@@ -150,6 +161,45 @@ export function DashboardGrid({ editing }: { editing: boolean }) {
       fetchSummary()
     }
   }, [plugins.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sort helpers — stable sorts that update both state and localStorage
+  function sortAlpha() {
+    setOrder((prev) => {
+      const keyOf = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
+      const pluginMap = Object.fromEntries(enabled.map((p) => [keyOf(p), p]))
+      const next = [...prev].sort((a, b) => {
+        const nameA = (pluginMap[a]?.display_name ?? a).toLowerCase()
+        const nameB = (pluginMap[b]?.display_name ?? b).toLowerCase()
+        return nameA < nameB ? -1 : nameA > nameB ? 1 : 0
+      })
+      saveOrder(next)
+      return next
+    })
+  }
+
+  function sortByType() {
+    setOrder((prev) => {
+      const keyOf = (p: PluginListItem) => `${p.plugin_id}:${p.instance_id}`
+      const pluginMap = Object.fromEntries(enabled.map((p) => [keyOf(p), p]))
+      const next = [...prev].sort((a, b) => {
+        const pa = pluginMap[a]
+        const pb = pluginMap[b]
+        const catA = (pa?.category ?? '').toLowerCase()
+        const catB = (pb?.category ?? '').toLowerCase()
+        if (catA !== catB) return catA < catB ? -1 : 1
+        const nameA = (pa?.display_name ?? a).toLowerCase()
+        const nameB = (pb?.display_name ?? b).toLowerCase()
+        return nameA < nameB ? -1 : nameA > nameB ? 1 : 0
+      })
+      saveOrder(next)
+      return next
+    })
+  }
+
+  // Expose sort handles to parent
+  useEffect(() => {
+    onRegisterHandles?.({ sortAlpha, sortByType })
+  }) // intentionally no dep array — always re-register so closures stay fresh
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),

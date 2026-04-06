@@ -57,6 +57,12 @@ class PlexPlugin(PluginBase):
                 "default": False,
                 "description": "Enable SSL certificate verification (disable for self-signed certificates)",
             },
+            "open_in_dashboard": {
+                "type": "boolean",
+                "title": "Open Video in Dashboard",
+                "default": False,
+                "description": "Play media directly in the dashboard in an overlay player. When disabled, media opens in a new browser tab via the Plex web player.",
+            },
         },
         "required": ["host", "token"],
     }
@@ -285,6 +291,7 @@ class PlexPlugin(PluginBase):
             "updated_at": data.get("updatedAt", 0),
             "my_plex": data.get("myPlex", False),
             "my_plex_username": data.get("myPlexUsername", ""),
+            "open_in_dashboard": bool(self._config.get("open_in_dashboard", False)),
         }
 
     async def _get_health(self) -> dict:

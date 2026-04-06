@@ -146,6 +146,7 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
   const [filterHost, setFilterHost] = useState('')
   const [filterPort, setFilterPort] = useState('')
   const [filterMac, setFilterMac] = useState('')
+  const [filterVlan, setFilterVlan] = useState('')
   const [advancedFilter, setAdvancedFilter] = useState('')
   const [showPresets, setShowPresets] = useState(false)
 
@@ -181,7 +182,12 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
     if (filterHost) parts.push(`host ${filterHost}`)
     if (filterPort) parts.push(`port ${filterPort}`)
     if (filterMac) parts.push(`ether host ${filterMac}`)
-    return parts.join(' and ')
+    const inner = parts.join(' and ')
+    // VLAN must come first in BPF expression to match encapsulated packets
+    if (filterVlan) {
+      return inner ? `vlan ${filterVlan} and ${inner}` : `vlan ${filterVlan}`
+    }
+    return inner
   })()
 
   const captureOptions: TcpdumpCaptureOptions = {
@@ -435,7 +441,7 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
               onClick={() => setFilterMode('advanced')}
             >Advanced (BPF)</button>
             <button
-              className="text-xs px-2.5 py-1 rounded bg-surface-3 text-gray-400 hover:text-white transition-colors ml-auto flex items-center gap-1"
+              className="text-xs px-2.5 py-1 rounded bg-surface-3 text-gray-400 hover:text-white transition-colors flex items-center gap-1"
               onClick={() => setShowPresets((p) => !p)}
             >
               Presets {showPresets ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
@@ -443,7 +449,7 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
           </div>
 
           {filterMode === 'simple' && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
               <div>
                 <label className="text-xs text-muted block mb-1">Protocol</label>
                 <select className="input w-full text-sm" value={protocol} onChange={(e) => setProtocol(e.target.value)}>
@@ -467,6 +473,10 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
               <div>
                 <label className="text-xs text-muted block mb-1">MAC Address</label>
                 <input className="input w-full text-sm font-mono" value={filterMac} onChange={(e) => setFilterMac(e.target.value)} placeholder="aa:bb:cc:dd:ee:ff" />
+              </div>
+              <div>
+                <label className="text-xs text-muted block mb-1">VLAN ID</label>
+                <input type="number" className="input w-full text-sm" value={filterVlan} onChange={(e) => setFilterVlan(e.target.value)} placeholder="100" min={1} max={4094} />
               </div>
             </div>
           )}
@@ -593,9 +603,9 @@ export function RemoteTcpdumpView({ instanceId = 'default' }: { instanceId?: str
           <button
             className="btn-secondary text-sm flex items-center gap-1.5 px-4"
             onClick={downloadPcap} disabled={loading || isStreaming}
-            title="Runs a fresh capture and downloads as .pcap (open in Wireshark)"
+            title="Runs a fresh capture with the current settings and downloads the result as a .pcap file for Wireshark. Does NOT download any previously displayed capture."
           >
-            <Download className="w-3.5 h-3.5" /> Download PCAP
+            <Download className="w-3.5 h-3.5" /> New Capture → PCAP
           </button>
         </div>
       </div>

@@ -6,6 +6,51 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.04.06-01] — 2026-04-06
+
+### Added
+
+#### HDHomeRun plugin (new)
+- New **HDHomeRun** plugin under the Media category for live TV streaming and tuner monitoring
+- **Device overview**: device name/model/firmware, tuner count, lineup status (source, scan state), and a live tuner status table showing active channels, signal strength (SS), signal quality (SNQ), symbol quality (SEQ), network rate, and target client IP
+- **Single-channel player**: click any channel to open a draggable/resizable in-dashboard player overlay; streams via `ffmpeg` → fragmented MP4 over WebSocket → MSE; custom volume/mute/fullscreen/PiP controls; signal bars (SS/SNQ/SEQ) polled live in the header; **Stats for nerds** overlay (Activity button) showing resolution, FPS, bitrate, buffer depth, decoded/dropped frames, and tuner signal metrics
+- **Multi-stream grid view** (the standout feature): select 2–4 channels and watch them simultaneously in a side-by-side grid. A single `ffmpeg` process handles all video tiles in one pass — no extra tuner slots consumed. Each grid cell uses a separate OS pipe for its audio track, all served from the same ffmpeg run. Switch audio between channels instantly (mute/unmute only — no reconnect, no stream restart). "Listen to All" button unmutes all channels simultaneously
+- **Picture-in-Picture**: PiP button sends the video to the browser's native PiP window; the UHLD modal hides (stream stays alive); returning from PiP restores the full modal with the stream still running
+- **Guide (EPG) tab**: 7-day programme guide with channel logos, programme titles, progress bars, and a programme detail panel with synopsis, episode title, duration, and a "Watch Now" shortcut
+- **Scheduled recordings tab**: view current and upcoming HDHomeRun RECORD engine schedules with rule type and priority
+- **Favorites**: star channels to float them to the top of the lineup
+- **Channel search**: live filter across the full lineup
+- **Signal bars widget**: `SignalMini` component renders SS/SNQ/SEQ as color-coded progress bars (green ≥ 80%, yellow ≥ 50%, red < 50%)
+- **Scan**: trigger a lineup rescan directly from the UI
+- **Plugin config**: host, port, stream format (ts/mp4), mute-by-default toggle, live streaming enable/disable guard (streams return `4403` close code when disabled)
+- Backend uses `ffmpeg` with `frag_every_frame+empty_moov+default_base_moof` movflags for MSE-compatible fragmented MP4; audio uses AAC (`-c:a aac`) since `frag_keyframe` is meaningless for audio-only streams
+
+#### UPS / NUT plugin (new)
+- New **UPS / NUT** plugin under the Power category for monitoring UPS devices via the Network UPS Tools protocol
+- Connects to a NUT server (upsd) over TCP using the NUT protocol: `USERNAME` → `PASSWORD` → `LOGIN <ups>` → queries
+- **Device list**: all UPS devices reported by the NUT server with status badge (Online / On Battery / Low Battery / Unknown)
+- **Device detail**: battery percentage, load percentage, runtime remaining, input/output voltage, and all raw NUT variables
+- **Battery test**: trigger `test.battery.start` INSTCMD directly from the UI; requires `LOGIN <ups>` before INSTCMD (NUT protocol requirement enforced)
+- **Power event notifications**: scheduled poll detects `OB` (on battery), `LB` (low battery), and `OL` (back on mains) transitions and fires alerts through the Notifications plugin
+
+#### Dashboard — Sort controls
+- Added **Sort A-Z** and **Sort by Type** buttons to the dashboard edit-layout toolbar, allowing quick reordering of all widgets
+
+#### Settings — Sensitive field visibility toggle
+- Password and API key fields in plugin config forms now have an **eye/eye-off toggle** to reveal the value while editing
+
+#### Kubernetes — additional resource detail
+- Added `ResourceDetail` component for clicking into individual Kubernetes resources (namespaces, CRDs, Helm charts, etc.)
+
+### Fixed
+
+- **`LOG_LEVEL=debug` crash**: `logging.basicConfig` requires uppercase level strings; added `.upper()` normalization so `LOG_LEVEL=debug` no longer crashes the backend on startup
+- **NUT battery test "ERR USERNAME-REQUIRED"**: NUT protocol requires `LOGIN <upsname>` after `USERNAME`+`PASSWORD` before `INSTCMD` is accepted; added the missing `LOGIN` step
+- **Kubernetes etcd/node health notifications**: wired etcd and node health change detection into the Notifications plugin during scheduled polling
+- **Multi-stream audio race condition**: rewrote audio management to keep all N WebSocket connections open for the full session lifetime; channel switching now only mutes/unmutes audio elements — no SourceBuffer surgery or WS reconnects, eliminating the race that caused audio to stop working after the first switch
+
+---
+
 ## [2026.04.04-01] — 2026-04-04
 
 ### Added

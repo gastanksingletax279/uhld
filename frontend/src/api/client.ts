@@ -388,6 +388,12 @@ export const api = {
       // Pod detail
       podDetail:         (namespace: string, pod: string) =>
         request<K8sPodDetail>(`${p}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/detail`),
+      // Deployment detail
+      deploymentDetail:  (namespace: string, name: string) =>
+        request<K8sDeploymentDetail>(`${p}/namespaces/${encodeURIComponent(namespace)}/deployments/${encodeURIComponent(name)}`),
+      // Node detail
+      nodeDetail:        (name: string) =>
+        request<K8sNodeDetail>(`${p}/nodes/${encodeURIComponent(name)}/details`),
       // Node maintenance
       cordonNode:        (name: string) =>
         request<{ ok: boolean }>(`${p}/nodes/${encodeURIComponent(name)}/cordon`, { method: 'POST' }),
@@ -430,6 +436,7 @@ export const api = {
       metallbCommunities:    () => request<{ communities: K8sMetalLBCommunity[] }>(`${p}/metallb/communities`),
       // etcd
       etcdStatus:            () => request<K8sEtcdStatus>(`${p}/etcd/status`),
+      etcdMetrics:           () => request<K8sEtcdMetrics>(`${p}/etcd/metrics`),
     }
   },
 
@@ -641,7 +648,7 @@ export const api = {
     const p = instanceId === 'default' ? '/api/plugins/plex' : `/api/plugins/plex/${instanceId}`
     return {
       // Server & Health
-      getStatus: () => request<Record<string, unknown>>(`${p}/status`),
+      getStatus: () => request<Record<string, unknown> & { open_in_dashboard?: boolean }>(`${p}/status`),
       getHealth: () => request<Record<string, unknown>>(`${p}/health`),
       // Sessions (Active Streams)
       getSessions: () => request<{ sessions: any[] }>(`${p}/sessions`),
@@ -686,6 +693,73 @@ export const api = {
       getUsers: () => request<{ users: any[] }>(`${p}/users`),
       // Updates
       checkUpdates: () => request<Record<string, unknown>>(`${p}/updates`),
+    }
+  },
+
+  // NUT UPS Server — instance-aware factory
+  nut: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/nut' : `/api/plugins/nut/${instanceId}`
+    return {
+      ups: () => request<{ upses: NUTUpsDevice[] }>(`${p}/ups`),
+      upsDetail: (name: string) => request<NUTUpsDevice>(`${p}/ups/${encodeURIComponent(name)}`),
+      testBattery: (name: string) => request<{ ok: boolean; result: string }>(`${p}/ups/${encodeURIComponent(name)}/test`, { method: 'POST' }),
+      history: () => request<{ history: NUTHistorySnapshot[] }>(`${p}/history`),
+    }
+  },
+
+  // HDHomeRun — instance-aware factory
+  hdhomerun: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/hdhomerun' : `/api/plugins/hdhomerun/${instanceId}`
+    return {
+      discover: () => request<HDHomeRunDevice>(`${p}/discover`),
+      lineup: () => request<{ channels: HDHomeRunChannel[]; count: number }>(`${p}/lineup`),
+      lineupStatus: () => request<HDHomeRunLineupStatus>(`${p}/lineup_status`),
+      tuners: () => request<{ tuners: HDHomeRunTunerStatus[] }>(`${p}/tuners`),
+      scan: () => request<{ ok: boolean }>(`${p}/lineup/scan`, { method: 'POST' }),
+      guide: (channel?: string, start?: number) => {
+        const qs = new URLSearchParams()
+        if (channel) qs.set('channel', channel)
+        if (start) qs.set('start', String(start))
+        const q = qs.toString()
+        return request<{ guide: HDHomeRunGuideChannel[]; unavailable?: boolean; reason?: string }>(
+          `${p}/guide${q ? `?${q}` : ''}`
+        )
+      },
+      /** Open a WebSocket that streams fragmented MP4 binary data for the given channel URL.
+       *  The caller feeds received ArrayBuffers into an MSE SourceBuffer. */
+      openStreamSocket: (channelUrl: string): WebSocket => {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsBase = `${wsProto}//${window.location.host}${p}`
+        return new WebSocket(`${wsBase}/stream/ws?url=${encodeURIComponent(channelUrl)}`)
+      },
+      /** Open a WebSocket that streams 2–4 channels combined into a video-only fMP4 grid.
+       *  Grid order: [0]=top-left [1]=top-right [2]=bottom-left [3]=bottom-right.
+       *  The server sends one text frame with {"session_id":"<uuid>"} before
+       *  streaming binary data.  Pass session_id to openMultiAudioSocket. */
+      openMultiVideoSocket: (channelUrls: string[]): WebSocket => {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsBase = `${wsProto}//${window.location.host}${p}`
+        const params = new URLSearchParams()
+        channelUrls.forEach(u => params.append('url', u))
+        return new WebSocket(`${wsBase}/stream/multi/video?${params}`)
+      },
+      /** Open a WebSocket that streams one audio channel from an active multi-stream session.
+       *  sessionId comes from the first text frame of openMultiVideoSocket.
+       *  To switch audio: close the current socket and open a new one with a
+       *  different audioIndex — the video stream continues unaffected. */
+      openMultiAudioSocket: (sessionId: string, audioIndex: number): WebSocket => {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsBase = `${wsProto}//${window.location.host}${p}`
+        return new WebSocket(`${wsBase}/stream/multi/audio?session_id=${encodeURIComponent(sessionId)}&audio=${audioIndex}`)
+      },
+      /** Open a WebSocket that streams audio-only fMP4 for a given channel URL.
+       *  Used by the single-channel VideoOverlay.
+       *  Codec string for MSE: 'audio/mp4; codecs="mp4a.40.2"' */
+      openAudioSocket: (channelUrl: string): WebSocket => {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsBase = `${wsProto}//${window.location.host}${p}`
+        return new WebSocket(`${wsBase}/stream/audio?url=${encodeURIComponent(channelUrl)}`)
+      },
     }
   },
 
@@ -1434,6 +1508,56 @@ export interface K8sPodDetail {
   events: { type: string; reason: string; message: string; count: number; last_time: string }[]
 }
 
+export interface K8sDeploymentDetail {
+  name: string
+  namespace: string
+  created: string
+  desired: number
+  ready: number
+  available: number
+  up_to_date: number
+  strategy: {
+    type: string
+    max_surge?: string | null
+    max_unavailable?: string | null
+  }
+  selector: Record<string, string>
+  conditions: { type: string; status: string; reason: string; message: string; last_update: string }[]
+  pod_template_containers: {
+    name: string
+    image: string
+    resources: { requests: Record<string, string>; limits: Record<string, string> }
+    ports: { name: string; container_port: number; protocol: string }[]
+    env_count: number
+  }[]
+  events: { type: string; reason: string; message: string; count: number; last_time: string }[]
+  labels: Record<string, string>
+  annotations: Record<string, string>
+}
+
+export interface K8sNodeDetail {
+  name: string
+  status: string
+  roles: string[]
+  created: string
+  labels: Record<string, string>
+  annotations: Record<string, string>
+  conditions: { type: string; status: string; reason: string; message: string }[]
+  addresses: { type: string; address: string }[]
+  node_info: {
+    os_image: string
+    kernel_version: string
+    container_runtime: string
+    kubelet_version: string
+    architecture: string
+    operating_system: string
+  }
+  capacity: Record<string, string>
+  allocatable: Record<string, string>
+  unschedulable: boolean
+  pods: { name: string; namespace: string; status: string; ready: string; created: string }[]
+}
+
 export interface K8sNamespace {
   name: string
   status: string
@@ -1868,6 +1992,33 @@ export interface K8sEtcdStatus {
   members?: K8sEtcdMember[]
 }
 
+export interface K8sEtcdMemberMetrics {
+  has_leader: number             // 0 or 1; -1 = unknown
+  leader_changes_total: number
+  db_size_bytes: number
+  wal_fsync_p99_seconds: number
+  backend_commit_p99_seconds: number
+  peer_sent_bytes_total: number
+}
+
+export interface K8sEtcdMemberMetricsResult {
+  name: string
+  health_ok: boolean
+  health_raw: string | null
+  proxy_unavailable?: boolean
+  metrics: K8sEtcdMemberMetrics | null
+}
+
+export interface K8sEtcdMetrics {
+  available: boolean
+  reason?: string
+  proxy_accessible?: boolean
+  any_health_data?: boolean
+  any_metrics_data?: boolean
+  mode?: string
+  members?: K8sEtcdMemberMetricsResult[]
+}
+
 // --- UniFi types ---
 export interface UniFiClient {
   id: string            // UUID (integration API) or MAC (session API)
@@ -1918,6 +2069,7 @@ export interface UniFiPort {
   vlan: number
   tagged_vlans: number[]
   tagged_network_names: string[]
+  is_trunk?: boolean    // true when op_mode="trunk" or any tagged VLANs (incl. "all")
   rx_bytes: number
   tx_bytes: number
   full_duplex: boolean
@@ -2030,4 +2182,107 @@ export interface BackupSchedule {
   enabled: boolean
   interval: string  // daily | weekly
   keep_count: number
+}
+
+// --- HDHomeRun types ---
+
+export interface HDHomeRunProgram {
+  StartTime: number       // Unix timestamp
+  EndTime: number         // Unix timestamp
+  Title: string
+  EpisodeTitle?: string
+  Synopsis?: string
+  ImageURL?: string
+  SeriesID?: string
+  ProgramID?: string
+  OriginalAirdate?: number
+  Filter?: string[]       // e.g. ["New", "CC"]
+}
+
+export interface HDHomeRunGuideChannel {
+  GuideNumber: string
+  GuideName: string
+  Affiliate?: string
+  ImageURL?: string
+  Guide: HDHomeRunProgram[]
+}
+
+export interface HDHomeRunDevice {
+  DeviceID?: string
+  FriendlyName?: string
+  ModelNumber?: string
+  FirmwareVersion?: string
+  UpgradeAvailable?: number
+  TunerCount?: number
+  BaseURL?: string
+  /** Set by UHLD backend — true only when enable_streaming is on in plugin config. */
+  streaming_enabled?: boolean
+  /** Set by UHLD backend — true when mute_by_default is on in plugin config. */
+  mute_by_default?: boolean
+}
+
+export interface HDHomeRunChannel {
+  GuideNumber: string
+  GuideName: string
+  HD?: number
+  Favorite?: number
+  VideoCodec?: string
+  AudioCodec?: string
+  URL?: string
+}
+
+export interface HDHomeRunLineupStatus {
+  ScanInProgress?: number
+  ScanPossible?: number
+  Source?: string
+  SourceList?: string[]
+}
+
+export interface HDHomeRunTunerStatus {
+  number: number          // derived from Resource ("tuner0" → 0)
+  Resource?: string       // tuner identifier: "tuner0", "tuner1", etc.
+  VctNumber?: string      // virtual channel number when active, e.g. "5.1"
+  VctName?: string        // channel name when active, e.g. "WEWS-HD"
+  Frequency?: number      // RF frequency in Hz
+  SignalStrengthPercent?: number
+  SignalQualityPercent?: number   // SNR quality (was SignalToNoiseQuality)
+  SymbolQualityPercent?: number
+  NetworkRate?: number    // bits per second — present only when streaming
+  TargetIP?: string       // client IP receiving the stream — present only when streaming
+}
+
+// --- NUT UPS Server types ---
+
+export interface NUTUpsDevice {
+  name: string
+  description: string
+  status: string
+  load?: number | null
+  battery_charge?: number | null
+  battery_runtime?: number | null
+  battery_voltage?: number | null
+  input_voltage?: number | null
+  output_voltage?: number | null
+  temperature?: number | null
+  model?: string | null
+  manufacturer?: string | null
+  firmware?: string | null
+  vars: Record<string, string>
+}
+
+export interface NUTSummary extends PluginSummary {
+  total: number
+  online: number
+  on_battery: number
+  low_battery: number
+  devices: NUTUpsDevice[]
+}
+
+export interface NUTHistorySnapshot {
+  ts: number
+  upses: Record<string, {
+    battery_charge: number | null
+    load: number | null
+    status: string
+  }>
 }

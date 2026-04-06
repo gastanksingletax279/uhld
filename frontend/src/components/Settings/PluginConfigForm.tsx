@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 
 interface SchemaProperty {
   type: string
@@ -54,6 +55,20 @@ export function PluginConfigForm({
     }
     return defaults
   })
+
+  const [revealedFields, setRevealedFields] = useState<Set<string>>(new Set())
+
+  function toggleReveal(key: string) {
+    setRevealedFields((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
 
   function setValue(key: string, val: unknown) {
     setValues((prev) => ({ ...prev, [key]: val }))
@@ -134,18 +149,44 @@ export function PluginConfigForm({
               rows={8}
               spellCheck={false}
             />
-          ) : (
-            <input
-              id={`field-${key}`}
-              type={prop.format === 'password' || prop.sensitive ? 'password' : 'text'}
-              className="input"
-              value={String(values[key] ?? '')}
-              onChange={(e) => setValue(key, e.target.value)}
-              placeholder={prop.placeholder ?? prop.description ?? ''}
-              required={required.has(key)}
-              autoComplete={prop.sensitive ? 'new-password' : 'off'}
-            />
-          )}
+          ) : (() => {
+            const isPasswordLike = prop.format === 'password' || prop.sensitive
+            const isRevealed = revealedFields.has(key)
+            return isPasswordLike ? (
+              <div className="relative">
+                <input
+                  id={`field-${key}`}
+                  type={isRevealed ? 'text' : 'password'}
+                  className="input pr-8"
+                  value={String(values[key] ?? '')}
+                  onChange={(e) => setValue(key, e.target.value)}
+                  placeholder={prop.placeholder ?? prop.description ?? ''}
+                  required={required.has(key)}
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  title="Show/hide password"
+                  onClick={() => toggleReveal(key)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-gray-300"
+                >
+                  {isRevealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            ) : (
+              <input
+                id={`field-${key}`}
+                type="text"
+                className="input"
+                value={String(values[key] ?? '')}
+                onChange={(e) => setValue(key, e.target.value)}
+                placeholder={prop.placeholder ?? prop.description ?? ''}
+                required={required.has(key)}
+                autoComplete="off"
+              />
+            )
+          })()}
 
           {prop.description && prop.type !== 'boolean' && (
             <p className="mt-1 text-xs text-muted">{prop.description}</p>

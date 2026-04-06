@@ -518,7 +518,9 @@ function PortsTab({ ports, networks }: { ports: UniFiPort[], networks: UniFiNetw
     return <div className="text-sm text-muted text-center py-12">No switch ports found. Ports are fetched from adopted switch devices.</div>
 
   const isTrunk = (p: UniFiPort) =>
-    (p.tagged_vlans?.length ?? 0) > 0 || (p.tagged_network_names?.length ?? 0) > 0
+    p.is_trunk === true ||
+    (p.tagged_vlans?.length ?? 0) > 0 ||
+    (p.tagged_network_names?.length ?? 0) > 0
 
   const filtered = ports.filter((p) => {
     if (modeFilter === 'trunk'  && !isTrunk(p)) return false
@@ -638,7 +640,11 @@ function PortsTab({ ports, networks }: { ports: UniFiPort[], networks: UniFiNetw
                             </div>
                           )}
                           <div className="flex flex-wrap gap-1">
-                            {p.tagged_vlans.length > 0
+                            {(p.tagged_network_names ?? []).includes('All VLANs') ? (
+                              <span className="font-mono text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30">
+                                All VLANs
+                              </span>
+                            ) : p.tagged_vlans.length > 0
                               ? p.tagged_vlans.map((vid) => (
                                   <span
                                     key={vid}

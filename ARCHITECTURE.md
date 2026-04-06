@@ -442,6 +442,8 @@ This means no per-plugin frontend config code is ever needed.
 | **LLM Assistant** | Developer | ✅ Complete | OpenAI-compatible + provider-specific adapters (httpx) |
 | **Cloudflare** | Network/DNS | ✅ Complete | Cloudflare API (zones, DNS, analytics, zone settings) |
 | **Plex** | Media | ✅ Complete | Plex HTTP API (sessions, libraries, media actions) |
+| **HDHomeRun** | Media | ✅ Complete | HDHomeRun HTTP API + ffmpeg WebSocket streaming |
+| **UPS / NUT** | Power | ✅ Complete | `nut2` (Network UPS Tools) — APC, Eaton, CyberPower, Tripplite |
 | **Grafana** | Monitoring | Planned | Grafana HTTP API (httpx) |
 
 ### Phase 2
@@ -454,7 +456,7 @@ This means no per-plugin frontend config code is ever needed.
 | **Radarr** | Arr | direct REST |
 | **Sonarr** | Arr | direct REST |
 | **Prowlarr** | Arr | direct REST |
-| **UPS / NUT** | Power | `nut2` (Network UPS Tools) — covers APC, Eaton, CyberPower, Tripplite, Vertiv |
+| **UPS / NUT** | Power | ✅ Complete — moved to Phase 1 |
 | **IPMI / BMC** | Hardware | `pyghmi` — iDRAC, iLO, generic IPMI out-of-band management |
 | **Scrutiny** | Storage | Scrutiny REST API — SMART disk health monitoring |
 | **Immich** | Media | Immich REST API — self-hosted Google Photos alternative |

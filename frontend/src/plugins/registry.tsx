@@ -33,6 +33,10 @@ import { PlexWidget } from './plex/Widget'
 import { PlexView } from './plex/View'
 import { CloudflareWidget } from './cloudflare/Widget'
 import { CloudflareView } from './cloudflare/View'
+import { HDHomeRunWidget } from './hdhomerun/Widget'
+import { HDHomeRunView } from './hdhomerun/View'
+import { NUTWidget } from './nut/Widget'
+import { NUTView } from './nut/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -52,6 +56,8 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   patch_panel: PatchPanelWidget,
   plex: PlexWidget,
   cloudflare: CloudflareWidget,
+  hdhomerun: HDHomeRunWidget,
+  nut: NUTWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -72,4 +78,6 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   patch_panel: PatchPanelView,
   plex: PlexView,
   cloudflare: CloudflareView,
+  hdhomerun: HDHomeRunView,
+  nut: NUTView,
 }
