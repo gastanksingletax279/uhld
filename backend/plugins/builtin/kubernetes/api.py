@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, WebSocket
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.plugins.builtin.kubernetes.plugin import KubernetesPlugin
@@ -539,6 +542,7 @@ def make_router(plugin: KubernetesPlugin) -> APIRouter:
         try:
             return await plugin._fetch_etcd_metrics()
         except Exception as exc:
-            return {"available": False, "reason": str(exc)}
+            logger.warning("etcd metrics unavailable: %s", exc)
+            return {"available": False, "reason": "etcd metrics unavailable"}
 
     return router
