@@ -275,6 +275,8 @@ function MarkdownContent({ content }: MarkdownProps) {
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** Optional display label — shown in the chat bubble instead of the raw content. */
+  display?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -326,11 +328,11 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
   }
 
   /** Core send: appends user message, gets reply, appends assistant message */
-  async function sendMessage(userContent: string, modelOverride?: string, tempOverride?: number) {
+  async function sendMessage(userContent: string, modelOverride?: string, tempOverride?: number, displayLabel?: string) {
     const trimmed = userContent.trim()
     if (!trimmed) return
 
-    const newUserMsg: ChatMessage = { role: 'user', content: trimmed }
+    const newUserMsg: ChatMessage = { role: 'user', content: trimmed, display: displayLabel }
     const updatedHistory = [...messages, newUserMsg]
     setMessages(updatedHistory)
     setPrompt('')
@@ -357,29 +359,92 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
     }
   }
 
-  /** Build a smart infra status prompt and immediately send it */
+  /** Build a rich infra status prompt and immediately send it */
   async function sendInfraStatus() {
     setLoadingStatus(true)
     setError('')
     try {
       const data = await api.dashboardSummary()
-      const plugins: PluginSummary[] = (data.plugins ?? []).filter(
-        (p) => p.status === 'ok' || p.status === 'error'
-      )
-      const formattedStatus = JSON.stringify(plugins, null, 2)
+      const plugins: PluginSummary[] = data.plugins ?? []
+
+      // Categorise plugins by type for richer context
+      const byCategory: Record<string, PluginSummary[]> = {}
+      for (const p of plugins) {
+        const cat = (p.category as string | undefined) ?? p.plugin_id
+        ;(byCategory[cat] ??= []).push(p)
+      }
+
+      const healthy  = plugins.filter(p => p.status === 'ok')
+      const degraded = plugins.filter(p => p.status === 'error' || p.status === 'warning')
+      const unknown  = plugins.filter(p => p.status !== 'ok' && p.status !== 'error' && p.status !== 'warning')
+
+      // Format each plugin's data concisely, stripping nulls and internal fields
+      function fmt(p: PluginSummary): string {
+        const { plugin_id, instance_id, ...rest } = p
+        const label = instance_id && instance_id !== 'default' ? `${plugin_id} (${instance_id})` : plugin_id
+        // Recursively remove null/undefined values to keep the payload tight
+        const clean = JSON.parse(JSON.stringify(rest, (_k, v) => v == null ? undefined : v))
+        return `### ${label}\n\`\`\`json\n${JSON.stringify(clean, null, 2)}\n\`\`\``
+      }
+
+      const sections: string[] = []
+
+      if (degraded.length > 0) {
+        sections.push(`## ⚠️ Degraded / Errored Services (${degraded.length})\n${degraded.map(fmt).join('\n\n')}`)
+      }
+      if (healthy.length > 0) {
+        sections.push(`## ✅ Healthy Services (${healthy.length})\n${healthy.map(fmt).join('\n\n')}`)
+      }
+      if (unknown.length > 0) {
+        sections.push(`## ❓ Unknown Status (${unknown.length})\n${unknown.map(fmt).join('\n\n')}`)
+      }
 
       const infraPrompt =
-        `You are an infrastructure monitoring assistant. Here is the current status of my homelab services:\n\n` +
-        `\`\`\`json\n${formattedStatus}\n\`\`\`\n\n` +
-        `Please provide:\n` +
-        `1. A brief overall health summary (1-2 sentences)\n` +
-        `2. Any services showing errors or warnings\n` +
-        `3. Key metrics worth noting\n` +
-        `4. Any recommended actions\n\n` +
-        `Respond in clear markdown with headers.`
+        `You are an expert homelab infrastructure assistant with deep knowledge of self-hosted services, ` +
+        `networking, virtualisation, containers, and home media systems.\n\n` +
+        `The user is running UHLD (Ultimate Homelab Dashboard), a self-hosted infrastructure dashboard. ` +
+        `Below is a real-time snapshot of all their enabled services as of right now.\n\n` +
+        `${sections.join('\n\n')}\n\n` +
+        `---\n\n` +
+        `Using the data above, please provide a **comprehensive infrastructure report** structured as follows:\n\n` +
+        `## 1. Overall Health Summary\n` +
+        `A 2–3 sentence executive summary. Mention the total number of services monitored, ` +
+        `how many are healthy vs degraded, and the general state of the infrastructure.\n\n` +
+        `## 2. Issues & Alerts\n` +
+        `For every service with status \`error\` or \`warning\`, explain:\n` +
+        `- What is wrong (be specific — reference actual values from the data)\n` +
+        `- Likely cause (common reasons for this type of failure)\n` +
+        `- Recommended remediation steps\n\n` +
+        `If no services are degraded, say so and note this is a good sign.\n\n` +
+        `## 3. Key Metrics & Observations\n` +
+        `Highlight the most interesting or actionable data points across all services. Examples:\n` +
+        `- Proxmox: CPU/RAM utilisation, VM/CT counts, any guests that are stopped\n` +
+        `- Kubernetes: node health, pod counts, any pods in non-Running state\n` +
+        `- Docker: running vs stopped containers\n` +
+        `- UniFi: connected client counts, devices, any offline APs or switches\n` +
+        `- AdGuard/Pi-hole: query counts, blocking rates, top blocked domains if available\n` +
+        `- Plex: active streams, transcoding sessions\n` +
+        `- UPS/NUT: battery level, load %, estimated runtime — flag anything below safe thresholds\n` +
+        `- HDHomeRun: active tuners, signal quality\n` +
+        `- Cloudflare: request/threat counts, any zone issues\n` +
+        `- Tailscale: connected devices, any nodes offline\n\n` +
+        `## 4. Capacity & Performance Trends\n` +
+        `Based on the current metrics, call out any resources approaching limits ` +
+        `(high CPU, low disk, high memory, UPS battery below 50%, etc.) and suggest proactive actions.\n\n` +
+        `## 5. Recommended Actions\n` +
+        `A numbered action list, ordered by priority (critical first). ` +
+        `Each item should be specific and actionable — not generic advice. ` +
+        `Reference the actual service name and the specific value that prompted the recommendation.\n\n` +
+        `Format your entire response in clean Markdown. Be concise but thorough. ` +
+        `If a section has nothing to report, briefly say so rather than omitting the section.`
 
-      // Immediately submit — do not put text in the input box
-      await sendMessage(infraPrompt)
+      const pluginCount = plugins.length
+      const errCount = plugins.filter(p => p.status === 'error' || p.status === 'warning').length
+      const displayLabel = errCount > 0
+        ? `📊 Infrastructure Status — ${pluginCount} services monitored, ${errCount} issue${errCount !== 1 ? 's' : ''} detected`
+        : `📊 Infrastructure Status — ${pluginCount} services monitored, all healthy`
+
+      await sendMessage(infraPrompt, undefined, undefined, displayLabel)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to fetch infrastructure status')
     } finally {
@@ -570,7 +635,7 @@ export function LLMAssistantView({ instanceId = 'default' }: { instanceId?: stri
                 }`}
               >
                 {msg.role === 'user' ? (
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  <p className="text-sm whitespace-pre-wrap">{msg.display ?? msg.content}</p>
                 ) : (
                   <MarkdownContent content={msg.content} />
                 )}

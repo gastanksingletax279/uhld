@@ -1,10 +1,10 @@
 # UHLD — Ultimate Homelab Dashboard
 
-> **Work in progress — under heavy development. Expect breaking changes.**
+> **Work in progress — under active development.**
 
-A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Proxmox, Docker, Kubernetes, AdGuard, Pi-hole, Tailscale, UniFi, Plex, Cloudflare, and more from a single unified interface.
+A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage your entire infrastructure from a single unified interface.
 
-> This project is built entirely using [Claude Code](https://claude.ai/code), Anthropic's agentic coding tool.
+> Built entirely using [Claude Code](https://claude.ai/code), Anthropic's agentic coding tool.
 
 ![UHLD Dashboard](images/dashboard.png)
 
@@ -12,59 +12,127 @@ A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage Prox
 
 ## What it is
 
-UHLD is the homelab equivalent of Home Assistant — but for infrastructure instead of home automation. Deploy it as a single Docker container, enable plugins for the services you run, and get a unified dashboard to monitor and interact with your entire homelab from one place.
+UHLD is the homelab equivalent of Home Assistant — but for **infrastructure** instead of home automation. Deploy it as a single Docker container, enable plugins for the services you already run, and get a unified dashboard to monitor and interact with your entire homelab from one place.
 
-- **Plugin-first** — every integration is a plugin, nothing is hardcoded
-- **Multi-instance** — run multiple instances of any plugin (two Proxmox clusters, two UniFi controllers, etc.)
-- **Read/monitor by default** — write and action operations always require explicit intent
-- **Single container** — FastAPI backend + React frontend, one Docker image
-- **Credential encryption** — all plugin secrets are encrypted at rest
-- **Light/dark theme** — CSS-variable-backed adaptive theme with toggle
-- **Drag-to-reorder dashboard** — customizable widget layout persisted per-browser
+No agent installs, no external databases, no cloud dependencies. One container. SQLite. Done.
 
 ---
 
-## Current Status
+## Key Features
 
-| Feature | Status |
-|---------|--------|
-| Core framework (auth, plugin registry, settings) | ✅ Complete |
-| First-launch setup (auto admin/admin, forced password change) | ✅ Complete |
-| Light / dark mode toggle | ✅ Complete |
-| Drag-to-reorder dashboard tiles | ✅ Complete |
-| Multi-instance plugin support | ✅ Complete |
-| Multi-user with admin / viewer roles | ✅ Complete |
-| TOTP 2FA (Google Authenticator, Authy) | ✅ Complete |
-| Passkeys / WebAuthn (YubiKey, Touch ID, Face ID, Windows Hello) | ✅ Complete |
-| OAuth / OIDC (Entra ID, Google, GitHub) | ✅ Complete |
-| Proxmox VE plugin (nodes, host drill-down, VM/CT topology tree, performance graphs, start/stop/reboot) | ✅ Complete |
-| AdGuard Home plugin (stats, query log, protection toggle) | ✅ Complete |
-| Pi-hole plugin (stats, query log, blocking toggle) | ✅ Complete |
-| Tailscale plugin (devices, users, DNS, ACL editor, sidecar status) | ✅ Complete |
-| UniFi plugin (clients, devices, ports, networks, WiFi, firewall) | ✅ Complete |
-| Docker plugin (containers, images, logs, start/stop/restart) | ✅ Complete |
-| Kubernetes plugin (nodes, workloads, networking, storage, logs, shell, YAML editor) | ✅ Complete |
-| Nginx Proxy Manager plugin (proxy host + certificate CRUD) | ✅ Complete |
-| Network Tools plugin (ping/traceroute live stream, speedtest history) | ✅ Complete |
-| LLM Assistant plugin (OpenAI/Ollama/Anthropic/OpenWebUI) | ✅ Complete |
-| Cloudflare plugin (zones, DNS records, analytics, zone settings) | ✅ Complete |
-| Plex plugin (active sessions, libraries, media actions) | ✅ Complete |
-| Notifications plugin (email, Telegram, webhook) | ✅ Complete |
-| Configuration backup & restore | ✅ Complete |
-| Asset Inventory plugin (CMDB for homelab hardware) | ✅ Complete |
-| Patch Panel plugin (port/device/switch mapping) | ✅ Complete |
-| Remote Packet Capture (tcpdump local or SSH, live stream, PCAP download) | ✅ Complete |
-| Tasks & Incidents plugin (infrastructure task queue) | ✅ Complete |
-| HDHomeRun plugin (live TV, multi-stream grid, PiP, signal monitoring) | ✅ Complete |
-| UPS / NUT plugin (battery %, load, runtime, power events, notifications) | ✅ Complete |
-| Jellyfin / TrueNAS / Synology | Planned |
+### 🔌 Plugin Architecture
+Every integration is a self-contained plugin. Enable only what you need — each plugin has its own sidebar entry, dashboard widget, and full-page view. Any plugin can be enabled multiple times with independent configs (two Proxmox clusters, two UniFi controllers, etc.).
+
+### 🔐 Authentication & Multi-User
+Full multi-user support with admin and viewer roles. Multiple authentication methods available simultaneously:
+
+| Method | Details |
+|--------|---------|
+| **Username + Password** | bcrypt-hashed; forced change on first login |
+| **TOTP 2FA** | Google Authenticator, Authy, any TOTP app |
+| **Passkeys / WebAuthn** | YubiKey, Touch ID, Face ID, Windows Hello — no password needed |
+| **OAuth / OIDC** | Microsoft Entra ID (Azure AD), Google, GitHub |
+
+### 📊 Dashboard
+- Drag-to-reorder widget tiles, persisted per-browser
+- Sort widgets A-Z or by type in one click
+- Collapsible sidebar sections — group plugins however you like
+- Per-plugin summary widgets with live status
+
+### 🔔 Notifications
+Email (SMTP), Telegram, and HMAC-signed webhooks. Alerts fire automatically when any plugin transitions between healthy and degraded states. Per-channel enable/disable and minimum severity filters. Full notification history with read/unread tracking.
+
+### 🤖 LLM Assistant
+Chat with your infrastructure. Connects to OpenAI, Anthropic (Claude), Ollama, OpenWebUI, or any OpenAI-compatible API. The **Infrastructure Status** button fetches a live snapshot of all enabled services and builds a detailed prompt — the LLM responds with a structured health report, identified issues, capacity observations, and prioritized action items.
+
+### 🔒 Credential Security
+All plugin secrets (API keys, passwords, tokens) are **Fernet-encrypted** before being stored in SQLite. Sensitive fields are masked in the UI and never logged. The encryption key never leaves your server.
+
+### 💾 Config Backup & Restore
+Full JSON export of all plugin configs, settings, and users. Restore from a backup file via the Settings UI. Scheduled automatic backups with rotation.
+
+---
+
+## Plugin Status
+
+### ✅ Virtualization & Containers
+
+| Plugin | What you can do |
+|--------|----------------|
+| **Proxmox VE** | Sidebar tree (Datacenter → Node → VM/CT), datacenter summary, VM/CT detail with RRD performance charts, start/stop/reboot, tag chips, topology tree view |
+| **Docker** | Container list with live state, start/stop/restart, real-time log streaming with keyword filter, container stats (CPU/RAM/net), Docker host overview, event log |
+| **Kubernetes** | Nodes (cordon/drain/delete), workloads, networking, storage, live log stream, **interactive pod shell**, YAML editor with dry-run validation, MetalLB CRDs, etcd health |
+
+### ✅ Network & DNS
+
+| Plugin | What you can do |
+|--------|----------------|
+| **UniFi** | Client list, device list, switch port detail (trunk/access/VLAN names), networks, WiFi, firewall rules — supports API key and session auth |
+| **AdGuard Home** | Query stats, query log, enable/disable protection |
+| **Pi-hole** | Query stats, query log, enable/disable blocking |
+| **Tailscale** | Devices, users, DNS settings, HuJSON ACL editor, auth keys, sidecar local status |
+| **Nginx Proxy Manager** | Full proxy host CRUD, certificate CRUD, enable/disable hosts — no need to open NPM |
+| **Cloudflare** | Zone list, DNS record CRUD, analytics, zone settings, cache purge, zone pause/unpause |
+| **Network Tools** | Live ping/traceroute line-by-line streaming, speedtest with history |
+| **Remote Packet Capture** | tcpdump over SSH or local; live SSE output stream; PCAP binary download; 36 presets across 7 groups; interface discovery; output flags, MAC filter, duration cap |
+| **Patch Panel** | Document patch panel ports, linked devices, and switch port mappings |
+
+### ✅ Media
+
+| Plugin | What you can do |
+|--------|----------------|
+| **Plex** | Active session monitoring, library list, media actions (pause/resume/terminate/seek), server health |
+| **HDHomeRun** | Live TV single-channel player; **multi-stream grid** (2–4 channels simultaneously); 7-day EPG guide; signal bars; Picture-in-Picture; stats overlay |
+
+### ✅ Power
+
+| Plugin | What you can do |
+|--------|----------------|
+| **UPS / NUT** | Battery %, load %, runtime remaining, input/output voltage, all raw NUT vars; power event notifications (on-battery / low-battery / back-on-mains) via Notifications plugin |
+
+### ✅ Utility & Automation
+
+| Plugin | What you can do |
+|--------|----------------|
+| **LLM Assistant** | Chat interface for OpenAI / Anthropic / Ollama / OpenWebUI; infrastructure status analysis prompt |
+| **Notifications** | Email, Telegram, HMAC webhook; auto-alerts on plugin health transitions; notification history |
+| **Tasks & Incidents** | Infrastructure task queue and incident tracker |
+| **Asset Inventory** | Lightweight CMDB — track servers, switches, VMs with hardware specs and notes |
+
+### 🔜 Planned
+
+| Plugin | Category |
+|--------|----------|
+| Jellyfin | Media |
+| TrueNAS | Storage |
+| Synology DSM | Storage |
+| Grafana | Monitoring |
+| Radarr / Sonarr / arr stack | Media Automation |
+| Home Assistant | Automation |
+| IPMI / BMC | Hardware |
+| ArgoCD | Developer |
+| AWX / Semaphore | Automation |
+
+---
+
+## Spotlight: HDHomeRun Multi-Stream Grid
+
+One of the most unique features in UHLD — watch **2–4 live TV channels simultaneously** in a side-by-side grid, all from the browser.
+
+**How it works under the hood:** A single `ffmpeg` process encodes all channels into one video grid, using OS pipes to deliver per-channel audio streams in parallel. This means watching 4 channels consumes the same number of tuner slots as watching 1 — no wasted hardware resources.
+
+**Audio control:** Each channel has a dedicated audio pipeline. Switch audio sources instantly — no stream restart, no reconnect, no buffering delay. Hit **"Listen to All"** to unmute every channel simultaneously (useful for monitoring).
+
+**Picture-in-Picture:** Click the PiP button and the UHLD modal disappears entirely while the browser's native PiP window keeps playing. The full modal restores automatically when PiP exits — stream never stops.
+
+**Stats overlay:** An Activity button shows a live stats panel over the video: resolution, FPS, bitrate, buffer depth, decoded/dropped frame counts, and live tuner signal metrics (SS/SNQ/SEQ).
 
 ---
 
 ## Tech Stack
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy async + aiosqlite, APScheduler
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, dnd-kit
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, dnd-kit, Recharts, lucide-react
 - **Auth:** JWT (httpOnly cookie), bcrypt, TOTP (`pyotp`), WebAuthn (`py-webauthn`), OAuth 2.0 / OIDC
 - **Storage:** SQLite — zero external dependencies
 - **Deployment:** Multi-stage Docker (node:20-alpine → python:3.12-slim)
@@ -77,14 +145,14 @@ UHLD is the homelab equivalent of Home Assistant — but for infrastructure inst
 
 - Docker and Docker Compose
 
-### Generate secrets
+### 1. Generate secrets
 
 ```bash
-python -c "import secrets; print(secrets.token_hex(32))"                               # JWT_SECRET
+python -c "import secrets; print(secrets.token_hex(32))"                                # JWT_SECRET
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
 ```
 
-### docker-compose.yml
+### 2. docker-compose.yml
 
 ```yaml
 services:
@@ -101,141 +169,92 @@ services:
     restart: unless-stopped
 ```
 
+### 3. Start
+
 ```bash
 docker compose up -d
 ```
 
-Then open `http://localhost:8222`.
+Open `http://localhost:8222`. Default login is **`admin` / `admin`** — you'll be prompted to change the password immediately.
 
-### First login
+### 4. Enable plugins
 
-On first launch UHLD auto-creates an **`admin` / `admin`** account and immediately prompts you to set a new password before continuing.
+Go to **Settings → Plugins**, find the services you run, click **Enable**, fill in the connection details, and save. Each enabled plugin appears in the sidebar and gets a dashboard widget automatically.
 
 ---
 
-## ⚠️ Security Considerations
+## ⚠️ Security
 
-**USE AT YOUR OWN RISK.** UHLD has access to sensitive infrastructure data and control operations across your entire homelab. Treat it with the same security care you would any administrative dashboard.
+UHLD is an **administrative dashboard** with broad access to your infrastructure. Treat it accordingly.
 
-### What UHLD Can Access
-
-- **Proxmox:** VM/LXC lifecycle, host information, storage, resource usage
-- **Docker:** Container lifecycle (start/stop/restart), log access, image inventory
-- **Kubernetes:** Pod/deployment management, container logs, **interactive shell exec into any running pod**, direct YAML patch/apply to cluster resources — treat this as equivalent to `kubectl` access
-- **UniFi:** Network devices, clients, WiFi settings, firewall rules
-- **Tailscale:** Node management, user access, DNS, ACLs
-- **AdGuard/Pi-hole:** DNS blocking rules, query logs
-- **All plugins:** Any credentials you provide are stored and used to access those services
-
-An attacker who gains access to UHLD can:
-- View sensitive data from all connected services
-- Start/stop/reboot VMs and containers
-- Modify network configurations
-- Access logs and diagnostics containing PII or secrets
-- **Execute an interactive shell inside any running Kubernetes pod** — including pods with access to databases, secrets, internal APIs, or service account tokens
-- **Apply arbitrary YAML to your Kubernetes cluster** — equivalent to having `kubectl apply` access
-- Potentially pivot to other infrastructure components via pod environments, mounted secrets, or service accounts
-
-### Security Best Practices
-
-**Always:**
-- ✅ Use **strong, unique passwords** for the UHLD admin account — this is your primary defense
-- ✅ Enable **TOTP 2FA** or register a **passkey** — both are available in Settings → Account
-- ✅ Keep UHLD on a **private network or VPN** — never expose the web interface directly to the public internet
-- ✅ Access only via **HTTPS with valid certificates** in production
-- ✅ Use **separate credentials** for UHLD that differ from your personal/primary passwords
-- ✅ Limit access to **trusted users only** — use role-based access control (Settings → Users)
-- ✅ Keep UHLD and all connected services **patched and up-to-date**
-- ✅ Regularly **rotate credentials** for service accounts (API keys, tokens, passwords)
-- ✅ Monitor **logs and audit trails** for suspicious activity
-- ✅ Back up and **encrypt your database** (`/data/uhld.db`) — it contains encrypted credentials and configuration
+**Minimum security baseline:**
+- ✅ Change the default `admin/admin` password immediately
+- ✅ Enable TOTP 2FA or register a passkey (Settings → Account)
+- ✅ Keep UHLD on a private network — access remotely via **Tailscale VPN**
+- ✅ Use HTTPS in production
+- ✅ Use separate service-account credentials for each plugin (not your personal login)
 
 **Never:**
-- ❌ Use default credentials (`admin/admin`) in production — change immediately
-- ❌ Expose UHLD to the public internet without proper authentication and TLS
-- ❌ Share the `JWT_SECRET` or `ENCRYPTION_KEY` — regenerate if compromised
-- ❌ Store credentials in plain text or commit them to version control
-- ❌ Ignore security updates or plugin vulnerabilities
+- ❌ Expose UHLD directly to the public internet without TLS + strong auth
+- ❌ Share or commit the `JWT_SECRET` or `ENCRYPTION_KEY`
 
-### Deployment Recommendations
+> Kubernetes users: UHLD can exec into any running pod and apply arbitrary YAML to your cluster. This is equivalent to having full `kubectl` access. Restrict who can log in.
 
-**For homelab/home use:**
-- Deploy behind a **firewall or NAT** (not port-forwarded to the internet)
-- Access via **Tailscale VPN** for remote access (use the Tailscale plugin for easy setup)
-- Disable plugins you don't use to reduce attack surface
-
-**For production/shared environments:**
-- Deploy in a **private network** with network segmentation
-- Use a **reverse proxy** (nginx, Traefik) with authentication (OAuth, OIDC)
-- Enable **HTTPS with valid certificates**
-- Implement **rate limiting** and **WAF rules**
-- Use **secrets management** for all credentials (HashiCorp Vault, K8s Secrets)
-- Enable **audit logging** and **monitoring**
-- Implement **least-privilege access** — separate admin, operator, and viewer roles
-
-### Reporting Security Issues
-
-If you discover a security vulnerability, **do not open a public issue.** Please contact the maintainers privately so the issue can be patched before disclosure.
+For security vulnerabilities, contact the maintainers privately — do not open a public issue.
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JWT_SECRET` | Yes | JWT signing secret |
-| `ENCRYPTION_KEY` | Yes | Fernet key for encrypting plugin credentials |
-| `DATABASE_PATH` | No | SQLite path (default: `/data/uhld.db`) |
-| `TZ` | No | Timezone (default: `America/Montreal`) |
-| `LOG_LEVEL` | No | Python log level (default: `INFO`) |
-| `WEBAUTHN_RP_ID` | No | Passkey relying-party ID — hostname only (auto-derived from request if unset) |
-| `WEBAUTHN_RP_NAME` | No | Display name shown in passkey prompts (default: `UHLD`) |
-| `WEBAUTHN_ORIGIN` | No | Full origin URL for WebAuthn (auto-derived from request if unset) |
-| `OAUTH_BASE_URL` | No | Base URL of this UHLD instance — used for OAuth redirect URIs |
-| `OAUTH_AUTO_PROVISION` | No | `true` to auto-create local accounts on first OAuth login (default: `false`) |
-| `OAUTH_ENTRA_CLIENT_ID` | No | Microsoft Entra ID (Azure AD) app client ID |
-| `OAUTH_ENTRA_CLIENT_SECRET` | No | Microsoft Entra ID app client secret |
-| `OAUTH_ENTRA_TENANT_ID` | No | Entra tenant ID or `common` for multi-tenant |
-| `OAUTH_GOOGLE_CLIENT_ID` | No | Google OAuth 2.0 client ID |
-| `OAUTH_GOOGLE_CLIENT_SECRET` | No | Google OAuth 2.0 client secret |
-| `OAUTH_GITHUB_CLIENT_ID` | No | GitHub OAuth app client ID |
-| `OAUTH_GITHUB_CLIENT_SECRET` | No | GitHub OAuth app client secret |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JWT_SECRET` | **Yes** | — | JWT signing secret |
+| `ENCRYPTION_KEY` | **Yes** | — | Fernet key for encrypting plugin credentials |
+| `DATABASE_PATH` | No | `/data/uhld.db` | SQLite database path |
+| `TZ` | No | `America/Montreal` | Timezone for scheduler |
+| `LOG_LEVEL` | No | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`) |
+| `WEBAUTHN_RP_ID` | No | auto | Passkey relying-party ID — hostname only |
+| `WEBAUTHN_RP_NAME` | No | `UHLD` | Display name shown in passkey prompts |
+| `WEBAUTHN_ORIGIN` | No | auto | Full origin URL for WebAuthn |
+| `OAUTH_BASE_URL` | No | — | Base URL of this UHLD instance (for OAuth redirects) |
+| `OAUTH_AUTO_PROVISION` | No | `false` | Auto-create accounts on first OAuth login |
+| `OAUTH_ENTRA_CLIENT_ID` | No | — | Microsoft Entra ID app client ID |
+| `OAUTH_ENTRA_CLIENT_SECRET` | No | — | Microsoft Entra ID app client secret |
+| `OAUTH_ENTRA_TENANT_ID` | No | — | Entra tenant ID or `common` |
+| `OAUTH_GOOGLE_CLIENT_ID` | No | — | Google OAuth 2.0 client ID |
+| `OAUTH_GOOGLE_CLIENT_SECRET` | No | — | Google OAuth 2.0 client secret |
+| `OAUTH_GITHUB_CLIENT_ID` | No | — | GitHub OAuth app client ID |
+| `OAUTH_GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth app client secret |
 
 ---
 
 ## Plugin Configuration
 
-Plugins are enabled and configured through **Settings → Plugins**. Each plugin's form is rendered dynamically from its JSON Schema — no manual config files needed. Sensitive fields (API keys, passwords, tokens) are encrypted before being stored.
+All plugin setup is done through **Settings → Plugins** — no config files, no environment variables per plugin. Each plugin's form is generated dynamically from its JSON Schema. Sensitive fields are encrypted at rest and masked in the UI.
 
-### Multi-instance plugins
-
-Any plugin can be enabled more than once with different connection settings. Use the **Add instance** button in Settings → Plugins to add a second instance (e.g., a second Proxmox cluster or UniFi controller). Each instance has its own sidebar entry and dashboard tile.
+**Multi-instance:** Any plugin can run as multiple independent instances. Click **Add instance** in Settings → Plugins to add a second connection (e.g., a home lab Proxmox + a work Proxmox). Each instance gets its own sidebar link, dashboard tile, and isolated config.
 
 ---
 
 ## Tailscale Sidecar (optional)
 
-UHLD can run as a Tailscale node to expose itself over your tailnet with HTTPS via MagicDNS. Use the provided `docker-compose.local.yml` and `build-run-local.sh` as a reference. Requires `TS_AUTHKEY` in `.env.local`.
+Run UHLD as a Tailscale node for private HTTPS access over your tailnet. See `docker-compose.local.yml` for reference — requires `TS_AUTHKEY` in `.env.local`.
 
-When a Tailscale sidecar is detected (Unix socket at `/var/run/tailscale/tailscaled.sock`), the Tailscale plugin view shows a live local status bar with node name, IP, and connection state.
+When the sidecar is active, the Tailscale plugin shows a live local status bar (node name, IP, connection state) in addition to the cloud API data.
 
 ---
 
 ## Development
 
 ```bash
-# Backend
+# Backend (hot reload)
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
-# Frontend
+# Frontend (Vite dev server — proxies /api/* to :8000)
 cd frontend && npm install && npm run dev
-# Vite proxies /api/* to localhost:8000
 
-# Local Docker build (with Tailscale sidecar)
-./build-run-local.sh   # requires .env.local with TS_AUTHKEY
-
-# Standard Docker build
+# Docker build
 ./build-run.sh
 ```
 
@@ -243,7 +262,7 @@ cd frontend && npm install && npm run dev
 
 ## Related Projects
 
-This project shares its architecture and code style with [apt-ui](https://github.com/mzac/apt-ui), a self-hosted apt package management dashboard — also built entirely with Claude Code.
+[apt-ui](https://github.com/mzac/apt-ui) — self-hosted apt package management dashboard. Same tech stack, same architecture, also built entirely with Claude Code.
 
 ---
 
