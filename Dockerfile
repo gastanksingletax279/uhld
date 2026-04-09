@@ -21,7 +21,9 @@ RUN apt-get update \
     && apt-get install -y \
     dnsutils \
     ffmpeg \
+    iperf3 \
     iputils-ping \
+    mtr-tiny \
     openssh-client \
     speedtest-cli \
     tcpdump \

@@ -6,6 +6,37 @@ Versions use `YYYY.MM.DD[-NN]` calendar-based tags.
 
 ---
 
+## [2026.04.09-01] — 2026-04-09
+
+### Added
+
+#### Synology DSM plugin (new)
+- New **Synology DSM** plugin under the Storage category for monitoring and managing Synology NAS devices
+- **System overview**: model, DSM version, serial number, uptime, system temperature (with warning indicator), and hostname
+- **CPU & RAM utilisation**: live user+system CPU percentage, memory usage bar and percentage
+- **Storage tab**: volume list with health status badge (Normal/Degraded), RAID type, filesystem, total/used/free space and usage bar; disk list with model, serial, temperature, and health badge; SMART test trigger per disk
+- **Shared Folders tab**: list of all shared folders with name, path, description, and encryption status
+- **Download Station tab**: list active/queued download tasks with status, progress bar, size, speed, and destination path; add new download by URI, pause/resume/delete tasks; shows "Download Station not available" gracefully when the package is not installed or not running
+- **Packages tab**: list all installed packages with status badge (Running/Stopped); start/stop any package directly from the UI
+- **File Browser tab**: navigate the NAS file system starting from shared folder roots; create folders, delete files/folders with confirmation, and download files directly through the browser
+- Backend uses DSM SYNO.API.Auth session management with automatic session re-login on expiry (error codes 105/106/107/119)
+- Dashboard widget shows model, DSM version, CPU%, RAM%, volume count, and degraded volume count
+
+#### Network Tools — expanded tool suite
+- **MTR (My Traceroute)**: live streaming MTR report via SSE — `mtr --report` with configurable cycle count; `mtr-tiny` added to the Docker image
+- **Port Check**: pure-Python asyncio TCP connection test — returns open/closed status and connection latency in ms
+- **HTTP Check**: fetches a URL via `httpx`, reports HTTP status code, response time, redirect chain, and first 25 response headers (cookies excluded)
+- **SSL Certificate Inspector**: connects via Python `ssl` module, extracts subject, issuer, valid-from/expiry dates, days remaining (or days expired), TLS version, cipher suite, and SANs
+- **Dig**: full `dig` output for any record type (A, AAAA, MX, TXT, CNAME, etc.) — separate from the brief DNS Lookup tool
+- **iPerf3**: live streaming bandwidth test via SSE — configurable server host/port, duration, and optional reverse mode; `iperf3` added to the Docker image
+- **Wake-on-LAN**: sends a magic packet to wake a device by MAC address; configurable broadcast address; admin-only endpoint
+
+### Fixed
+
+- **Speedtest Mbps conversion**: `speedtest-cli --json` returns bits per second (not bytes/sec); corrected the conversion from `(bytes * 8) / 1_000_000` to `bits / 1_000_000` so displayed speeds are accurate
+
+---
+
 ## [2026.04.06-01] — 2026-04-06
 
 ### Added

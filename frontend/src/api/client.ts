@@ -479,13 +479,25 @@ export const api = {
         request<CommandResult>(`${p}/ping`, { method: 'POST', body: JSON.stringify({ host, count }) }),
       traceroute: (host: string, max_hops = 20) =>
         request<CommandResult>(`${p}/traceroute`, { method: 'POST', body: JSON.stringify({ host, max_hops }) }),
+      mtrStreamUrl: `${p}/mtr/stream`,
+      portCheck: (host: string, port: number) =>
+        request<{ stdout: string; open: boolean; latency_ms: number }>(`${p}/port-check`, { method: 'POST', body: JSON.stringify({ host, port }) }),
+      httpCheck: (url: string) =>
+        request<{ stdout: string; status_code: number }>(`${p}/http`, { method: 'POST', body: JSON.stringify({ url }) }),
+      sslCheck: (host: string, port = 443) =>
+        request<{ stdout: string; expired: boolean }>(`${p}/ssl`, { method: 'POST', body: JSON.stringify({ host, port }) }),
       dns: (query: string, record_type = 'A') =>
         request<CommandResult>(`${p}/dns`, { method: 'POST', body: JSON.stringify({ query, record_type }) }),
+      dig: (query: string, record_type = 'A') =>
+        request<CommandResult>(`${p}/dig`, { method: 'POST', body: JSON.stringify({ query, record_type }) }),
       whois: (query: string) =>
         request<CommandResult>(`${p}/whois`, { method: 'POST', body: JSON.stringify({ query }) }),
+      iperf3StreamUrl: `${p}/iperf3/stream`,
       speedtest: () =>
         request<{ command: string; result: Record<string, unknown>; stdout: string; stderr: string; exit_code: number }>(`${p}/speedtest`, { method: 'POST', body: JSON.stringify({}) }),
       speedtestHistory: () => request<{ items: Record<string, unknown>[] }>(`${p}/speedtest/history`),
+      wol: (mac: string, broadcast = '255.255.255.255') =>
+        request<{ stdout: string; status: string }>(`${p}/wol`, { method: 'POST', body: JSON.stringify({ mac, broadcast }) }),
     }
   },
 
@@ -760,6 +772,39 @@ export const api = {
         const wsBase = `${wsProto}//${window.location.host}${p}`
         return new WebSocket(`${wsBase}/stream/audio?url=${encodeURIComponent(channelUrl)}`)
       },
+    }
+  },
+
+  // Synology DSM — instance-aware factory
+  synology: (instanceId = 'default') => {
+    const p = instanceId === 'default' ? '/api/plugins/synology' : `/api/plugins/synology/${instanceId}`
+    return {
+      info:        () => request<SynologyInfo>(`${p}/info`),
+      utilisation: () => request<SynologyUtilisation>(`${p}/utilisation`),
+      storage:     () => request<SynologyStorage>(`${p}/storage`),
+      shares:      () => request<{ shares: SynologyShare[] }>(`${p}/shares`),
+      downloads:   () => request<{ available: boolean; tasks: SynologyTask[]; total: number }>(`${p}/downloads`),
+      packages:    () => request<{ packages: SynologyPackage[] }>(`${p}/packages`),
+      files:       (path: string) => request<{ files: SynologyFile[] }>(`${p}/files?path=${encodeURIComponent(path)}`),
+      createDownload: (uri: string) =>
+        request<{ message: string }>(`${p}/downloads`, { method: 'POST', body: JSON.stringify({ uri }) }),
+      pauseDownload: (id: string) =>
+        request<{ message: string }>(`${p}/downloads/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
+      resumeDownload: (id: string) =>
+        request<{ message: string }>(`${p}/downloads/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+      deleteDownload: (id: string) =>
+        request<{ message: string }>(`${p}/downloads/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      startPackage: (id: string) =>
+        request<{ message: string }>(`${p}/packages/${encodeURIComponent(id)}/start`, { method: 'POST' }),
+      stopPackage: (id: string) =>
+        request<{ message: string }>(`${p}/packages/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+      createFolder: (path: string, name: string) =>
+        request<{ message: string }>(`${p}/files/folder`, { method: 'POST', body: JSON.stringify({ path, name }) }),
+      deleteFile: (path: string) =>
+        request<{ message: string }>(`${p}/files`, { method: 'DELETE', body: JSON.stringify({ path }) }),
+      smartTest: (diskId: string) =>
+        request<{ message: string }>(`${p}/storage/disks/${encodeURIComponent(diskId)}/smart-test`, { method: 'POST' }),
+      downloadFile: (path: string): string => `${p}/files/download?path=${encodeURIComponent(path)}`,
     }
   },
 
@@ -2285,4 +2330,95 @@ export interface NUTHistorySnapshot {
     load: number | null
     status: string
   }>
+}
+
+// --- Synology DSM types ---
+
+export interface SynologyInfo {
+  model: string
+  version: string
+  serial: string
+  uptime: number
+  temperature?: number
+  hostname?: string
+}
+
+export interface SynologyUtilisation {
+  available: boolean
+  cpu: { user: number; system: number; total: number }
+  memory: { total: number; used: number; free: number; usage: number }
+  network: Array<{ device: string; rx: number; tx: number }>
+}
+
+export interface SynologyVolume {
+  id: string
+  name: string
+  status: string
+  size_total: number
+  size_used: number
+  fs_type: string
+  raid_type: string
+}
+
+export interface SynologyDisk {
+  id: string
+  name: string
+  model: string
+  serial: string
+  size_total: number
+  temperature: number
+  status: string
+  smart_status: string
+  type: string
+}
+
+export interface SynologyStorage {
+  volumes: SynologyVolume[]
+  disks: SynologyDisk[]
+}
+
+export interface SynologyShare {
+  name: string
+  vol_path: string
+  desc: string
+  encrypt: boolean
+  is_mounted?: boolean
+  quota?: number
+}
+
+export interface SynologyTask {
+  id: string
+  title: string
+  status: string
+  size: number
+  size_downloaded: number
+  speed_download: number
+  speed_upload: number
+  destination: string
+}
+
+export interface SynologyPackage {
+  id: string
+  name: string
+  version: string
+  status: string
+}
+
+export interface SynologyFile {
+  name: string
+  path: string
+  isdir: boolean
+  size: number
+  time: number
+}
+
+export interface SynologySummary extends PluginSummary {
+  model?: string
+  dsm_version?: string
+  cpu_usage?: number
+  memory_usage?: number
+  volume_count?: number
+  volumes_healthy?: number
+  volumes_degraded?: number
+  active_downloads?: number
 }

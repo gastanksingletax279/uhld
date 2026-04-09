@@ -46,15 +46,14 @@ class NetworkToolsPlugin(PluginBase):
         }
 
     def add_speedtest_result(self, result: dict) -> None:
-        # Convert bytes per second to megabits per second for display
-        # speedtest-cli returns download/upload in bytes/sec, ping in ms
+        # speedtest-cli --json returns download/upload in bits per second, ping in ms
         download_bps = result.get("download", 0)
         upload_bps = result.get("upload", 0)
-        
+
         item = {
             "timestamp": datetime.now(UTC).isoformat(),
-            "download": round((download_bps * 8) / 1_000_000, 2) if download_bps else 0,  # Convert to Mbps
-            "upload": round((upload_bps * 8) / 1_000_000, 2) if upload_bps else 0,  # Convert to Mbps
+            "download": round(download_bps / 1_000_000, 2),   # bits/sec → Mbps
+            "upload":   round(upload_bps   / 1_000_000, 2),   # bits/sec → Mbps
             "ping": result.get("ping", 0),
             "server": result.get("server", {}),
             "client": result.get("client", {}),

@@ -73,7 +73,7 @@ Full JSON export of all plugin configs, settings, and users. Restore from a back
 | **Tailscale** | Devices, users, DNS settings, HuJSON ACL editor, auth keys, sidecar local status |
 | **Nginx Proxy Manager** | Full proxy host CRUD, certificate CRUD, enable/disable hosts — no need to open NPM |
 | **Cloudflare** | Zone list, DNS record CRUD, analytics, zone settings, cache purge, zone pause/unpause |
-| **Network Tools** | Live ping/traceroute line-by-line streaming, speedtest with history |
+| **Network Tools** | Live ping/traceroute/MTR streaming, port check, HTTP check, SSL certificate inspector, dig, iPerf3 bandwidth test, Wake-on-LAN, speedtest with history |
 | **Remote Packet Capture** | tcpdump over SSH or local; live SSE output stream; PCAP binary download; 36 presets across 7 groups; interface discovery; output flags, MAC filter, duration cap |
 | **Patch Panel** | Document patch panel ports, linked devices, and switch port mappings |
 
@@ -83,6 +83,12 @@ Full JSON export of all plugin configs, settings, and users. Restore from a back
 |--------|----------------|
 | **Plex** | Active session monitoring, library list, media actions (pause/resume/terminate/seek), server health |
 | **HDHomeRun** | Live TV single-channel player; **multi-stream grid** (2–4 channels simultaneously); 7-day EPG guide; signal bars; Picture-in-Picture; stats overlay |
+
+### ✅ Storage
+
+| Plugin | What you can do |
+|--------|----------------|
+| **Synology DSM** | System info (model/version/temperature), CPU & RAM utilisation, volume health, disk list with SMART test trigger, shared folder list, Download Station management (add/pause/resume/delete tasks), package start/stop, basic file browser |
 
 ### ✅ Power
 
@@ -105,7 +111,6 @@ Full JSON export of all plugin configs, settings, and users. Restore from a back
 |--------|----------|
 | Jellyfin | Media |
 | TrueNAS | Storage |
-| Synology DSM | Storage |
 | Grafana | Monitoring |
 | Radarr / Sonarr / arr stack | Media Automation |
 | Home Assistant | Automation |

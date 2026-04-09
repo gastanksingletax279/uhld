@@ -37,6 +37,8 @@ import { HDHomeRunWidget } from './hdhomerun/Widget'
 import { HDHomeRunView } from './hdhomerun/View'
 import { NUTWidget } from './nut/Widget'
 import { NUTView } from './nut/View'
+import { SynologyWidget } from './synology/Widget'
+import { SynologyView } from './synology/View'
 
 export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: PluginSummary }>> = {
   proxmox: ProxmoxWidget,
@@ -58,6 +60,7 @@ export const PLUGIN_WIDGETS: Record<string, React.ComponentType<{ summary: Plugi
   cloudflare: CloudflareWidget,
   hdhomerun: HDHomeRunWidget,
   nut: NUTWidget,
+  synology: SynologyWidget,
 }
 
 export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: string }>> = {
@@ -80,4 +83,5 @@ export const PLUGIN_VIEWS: Record<string, React.ComponentType<{ instanceId?: str
   cloudflare: CloudflareView,
   hdhomerun: HDHomeRunView,
   nut: NUTView,
+  synology: SynologyView,
 }
