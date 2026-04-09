@@ -272,7 +272,7 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
     # ── HTTP Check ────────────────────────────────────────────────────────────
 
     @router.post("/http")
-    async def check_http(body: HttpCheckBody, _: User = Depends(get_current_user)):
+    async def check_http(body: HttpCheckBody, _admin=Depends(require_admin)):
         import time
         url = body.url.strip()
         if not url.startswith(("http://", "https://")):
@@ -280,6 +280,8 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
 
         t0 = time.monotonic()
         try:
+            # verify=False is intentional: this is a network diagnostic tool that must be
+            # able to check URLs with self-signed or expired certificates.
             async with httpx.AsyncClient(
                 verify=False,
                 follow_redirects=body.follow_redirects,
@@ -287,7 +289,8 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
             ) as client:
                 resp = await client.get(url)
         except httpx.RequestError as exc:
-            return {"stdout": f"HTTP Check — {url}\n{'─'*40}\nError: {type(exc).__name__}: {exc}"}
+            logger.debug("HTTP check error for %s: %s", url, exc)
+            return {"stdout": f"HTTP Check — {url}\n{'─'*40}\nError: {type(exc).__name__}"}
 
         elapsed_ms = round((time.monotonic() - t0) * 1000)
         redirects = [str(r.url) for r in resp.history]
@@ -314,6 +317,8 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
         host = _validate_host(body.host)
 
         def _do_check() -> tuple:
+            # CERT_NONE is intentional: this tool is specifically designed to inspect
+            # certificates that may be self-signed, expired, or otherwise invalid.
             ctx = _ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = _ssl.CERT_NONE
@@ -324,7 +329,8 @@ def make_router(plugin: NetworkToolsPlugin) -> APIRouter:
         try:
             cert, tls_ver, cipher_info = await asyncio.get_event_loop().run_in_executor(None, _do_check)
         except Exception as exc:
-            return {"stdout": f"SSL Check — {host}:{body.port}\n{'─'*40}\nError: {exc}"}
+            logger.debug("SSL check error for %s:%s: %s", host, body.port, exc)
+            return {"stdout": f"SSL Check — {host}:{body.port}\n{'─'*40}\nError: {type(exc).__name__}"}
 
         subject = dict(x[0] for x in cert.get("subject", []))
         issuer  = dict(x[0] for x in cert.get("issuer", []))
